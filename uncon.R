@@ -2,7 +2,7 @@ rm(list = ls())
 library(nlme)
 library(ggplot2)
 sitka <- read.table("data/tsitka.txt", header = T)
-ggplot(sitka, aes(days, log.size, group = id.num)) + geom_line(aes(col = id.num))
+ggplot(sitka, aes(days, log.size, group = id.num)) + geom_line(aes(col = factor(id.num)))
 
 y <- sitka$log.size
 time <- sitka$days
@@ -13,22 +13,26 @@ K <- max(5, min(floor(length(unique(time)) / 4), 40))
 knots <- quantile(unique(time), seq(0, 1, length = K + 2))[-c(1, K + 2)]
 
 ## Set up design matrices
-X <- model.matrix(y ~ time)
-Z <- outer(time, knots, "-")
-Z <- Z * (Z > 0)
+X.l <- model.matrix(y ~ time)
+X.q <- model.matrix(y ~ time + I(time^2))
+Z.l <- outer(time, knots, "-")
+Z.l <- Z * (Z > 0)
+Z.q <- Z.l^2
 n <- length(y)
 
+## Subject specific (with random intercept)
 popSpline <- rep(1, n)
 subLinear <- subject
 fit1 <- lme(y ~ time, random = list(popSpline = pdIdent(~ Z - 1),
                                     subLinear = pdIdent(~ 1)))
 summary(fit1)
 
+## Subject specific (with random intercept and random slope)
 fit2 <- lme(y ~ time, random = list(popSpline = pdIdent(~ Z - 1),
                                     subLinear = pdSymm(~ time)))
 summary(fit2)
 
-## Subject specific
+## Subject specific with scaled time
 scalTime <- time / 674
 K <- 5
 kSubject <- K
@@ -46,12 +50,13 @@ zSubject <- zSubject * (zSubject > 0)
 
 pop.level <- factor(rep(1, n))
 sub.level <- factor(subject)
+## Subject specific (population and individuals splines use different knots)
 fit3 <- lme(fixed = y ~ scalTime,
             random = list(pop.level = pdIdent(~ Z - 1),
                           sub.level = pdBlocked(list(pdSymm(~ scalTime),
                                                      pdIdent(~ zSubject - 1)))))
 
-## Subject specific (same population and individuals splines)
+## Subject specific (population and individuals splines use same knots))
 fit4 <- lme(fixed = y ~ scalTime,
             random = list(pop.level = pdIdent(~ Z - 1),
                           sub.level = pdBlocked(list(pdSymm(~ scalTime),
@@ -88,15 +93,9 @@ new.pop.data <- data.frame(log.size = as.vector(new.pop.y.mat),
                            scalTime = new.scalTime)
 
 ggplot(mapping = aes(x = scalTime, y = log.size)) +
-    geom_point(aes(col = id.num), sitka, size = 2) +
-    geom_line(aes(group = id.num, col = id.num), new.data) +
+    geom_point(aes(col = factor(id.num)), sitka, size = 2) +
+    geom_line(aes(group = id.num, col = factor(id.num)), new.data) +
     geom_line(data = new.pop.data, col = 'red')
 
-dims <- rev(fit4$dims$ncol)[-(1:2)]
-pop.varcov.idx <- seq(1, length.out = dims["pop.level"] + 1)
-sub.varcov.idx <- seq(dims["pop.level"] + 2, length.out = dims["sub.level"] + 1)
-pop.varcov <- VarCorr(fit4)[pop.varcov.idx, ]
-sub.varcov <- VarCorr(fit4)[sub.varcov.idx, ]
 
 
-?rmvtgauss.lin

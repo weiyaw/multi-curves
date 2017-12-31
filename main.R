@@ -1,169 +1,15 @@
-library(TruncatedNormal)
-library(nlme)
-library(microbenchmark)
-library(mvtnorm)
-rm(list = ls())
-setwd("~/Gdrive/master/algo/")
-source("subor.R")
-sitka <- read.table("data/tsitka.txt", header = T)
-
-## Initialise dataset and factors
-y <- sitka$log.size
-y[length(y)] <- 4
-scal.time <- sitka$days / 674
-id.num <- sitka$id.num
-n <- NROW(sitka)
-K <- 5
-n.subject <- length(unique(sitka$id.num))
-n.per.sub <- tapply(sitka$id.num, sitka$id.num, length)
-n.terms <- K + 2
-pop.level <- factor(rep(1, n))
-sub.level <- factor(sitka$id.num)
-
-## Construct the knots, fixed and random effects design matrix
-knots <- quantile(unique(scal.time), seq(0, 1, length = K + 2))[-c(1, K + 2)]
-X <- model.matrix(y ~ scal.time, sitka)
-Z <- outer(scal.time, knots, `-`)
-Z <- Z * (Z > 0)
-
-## Fit a lme model
-fit1 <- lme(fixed = y ~ scal.time,
-            random = list(pop.level = pdIdent(~ Z - 1),
-                          sub.level = pdBlocked(list(pdSymm(~ scal.time),
-                                                     pdIdent(~ Z - 1)))))
-
-fit2 <- lme(fixed = y ~ scal.time,
-            random = list(pop.level = pdIdent(~ Z - 1),
-                          sub.level = pdBlocked(list(pdLogChol(~ scal.time),
-                                                     pdIdent(~ Z - 1)))))
-## Extract EBLUPS
-pop.coef <- as.matrix(coef(fit1, level = 1))
-sub.coef <- as.matrix(coef(fit1, level = 2)) -
-    matrix(rep(pop.coef, n.subject), n.subject, byrow = TRUE)
-crude.zeta <- c(pop.coef, t(sub.coef))
-
-## Extract variance covariance matrix
-varcov.list <- MultiVarCov(fit1$modelStruct$reStruct, fit1$sigma^2)
-pop.varcov.list <- list(diag(1, 2), varcov.list$pop.level)
-sub.varcov.list <- rep(varcov.list["sub.level"], n.subject)
-crude.varcov <- DiagMat(c(pop.varcov.list, sub.varcov.list))
-
-## Construct the constraint matrix A
-n.fixef <- fit1$dims$ncol[3]
-n.sub.ranef <- fit1$dims$ncol[1]
-single.A <- matrix(1, K + 1, K + 1)
-single.A[upper.tri(single.A)] <- 0
-single.A <- cbind(0, single.A)
-
-
-A <- DiagMat(single.A, n.subject)
-A <- rbind(matrix(0, NROW(single.A), NCOL(A)), A)
-A <- cbind(do.call("rbind", rep(list(single.A), n.subject + 1)), A)
-
-## rmvtgauss.lin(500, crude.zeta, crude.varcov, Amat = t(A), Avec = rep(0, NROW(A)))
-
-zeta.dim <- NCOL(crude.zeta)
-
-
-ApproxGibbs <- function(y, linear.mat, spline.mat, lme.obj, size = 1000) {
-    ## y : response
-    ## linear.mat: model matrix for straight line
-    ## spline.mat: model matrix for splines
-    ## lme.obj: unconstrained lme object from nlme
-    ## size: number of samples from the posterior distribution
-
-    ## Initialise
-    varcov.list <- lapply(lme.obj$modelStruct$reStruct, as.matrix)
-    varcov.list <- lapply(varcov.list, function (x) { x * lme.obj$sigma^2 })
-    n.per.sub <- tapply(lme.obj$groups[, -1], lme.obj$groups[, -1], length)
-    n.subject <- lme.obj$dims$ngrps[1]
-    n.fixed <- lme.obj$dims$ncol[length(lme.obj$dims$ncol) - 1]
-    n.terms <- lme.obj$dims$qvec[1]
-    n.splines <- n.terms - n.fixed
-
-    ## EBLUPS
-    pop.coef <- as.matrix(coef(lme.obj, level = 1))
-    sub.coef <- as.matrix(coef(lme.obj, level = 2)) -
-        VecToMat(pop.coef, n.subject, FALSE)
-    crude.mean <- c(pop.coef, t(sub.coef))
-
-    ## REML variance covariance
-    pop.varcov <- list(diag(1, n.fixed), varcov.list[[2]])
-    sub.varcov <- rep(varcov.list[1], n.subject)
-    varcov <- DiagMat(c(pop.varcov, sub.varcov))
-
-    ## Constraint matrix
-    single.A <- matrix(1, n.splines + 1, n.splines + 1)
-    single.A[upper.tri(single.A)] <- 0
-    single.A <- cbind(0, single.A)
-
-    A <- DiagMat(single.A, n.subject)
-    A <- rbind(matrix(0, NROW(single.A), NCOL(A)), A)
-    A <- cbind(do.call("rbind", rep(list(single.A), n.subject + 1)), A)
-
-    ## Candidates from independent proposal
-    cand <- rmvtgauss.lin(size, crude.mean, varcov, Amat = t(A),
-                          Avec = rep(0, NROW(A)))
-    unif.rv <- runif(size, 0, 1)
-
-    ## Model matrix
-    model.mat <- cbind(linear.mat, spline.mat, deparse.level = 0)
-
-    ## Initialise density functions
-    Prop <- ProposalLogFac(crude.mean, varcov, n.subject, n.terms)
-    Like <- LikelihoodLogFac(y, model.mat, n.terms, n.per.sub)
-    Prior <- PriorLogFac(n.terms, n.subject)
-
-    ## Fixed variance of random components
-    eps.prec <- 1 / lme.obj$sigma^2
-    u.prec <- 1 / pop.varcov[[2]][1, 1]
-    v.prec <- 1 / sub.varcov[[1]][3, 3]
-    b.prec <- solve(sub.varcov[[1]][1:2, 1:2])
-
-    ## MH step
-    zeta.prev <- crude.mean
-    prop.prev <- Prop(crude.mean)
-    like.prev <- Like(crude.mean, eps.prec)
-    prior.prev <- Prior(crude.mean, u.prec, v.prec, b.prec)
-
-    res <- matrix(NA, length(crude.mean), size)
-
-    for (i in seq_len(size)) {
-        zeta.curr <- cand[, i]
-        prop.curr <- Prop(zeta.curr)
-        like.curr <- Like(zeta.curr, eps.prec)
-        prior.curr <- Prior(zeta.curr, u.prec, v.prec, b.prec)
-        browser()
-        accpt.prob <- exp((prop.prev + like.curr + prior.curr) -
-                          (prop.curr + like.prev + prior.prev))
-
-        if (unif.rv[i] < accpt.prob) {
-            res[, i] <- zeta.curr
-            zeta.prev <- zeta.curr
-            like.prev <- like.curr
-            prior.prev <- prior.curr
-        } else {
-            res[, i] <- zeta.prev
-        }
-        if (i %% 100 == 0) {
-            cat(i, " ")
-        }
-    }
-    cat("\n")
-    return(res)
-}
-
-post <- ApproxGibbs(y, X, Z, fit2, 5)
-hist(post[3,])
-
-
-ExactGibbs <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
+SubjectLin <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
                        burn = size / 10) {
-    ## y : response (better be sorted on subjects indices)
+    ## y : response used in lme.obj (better be sorted according to subjects
+    ##     indices)
     ## linear.mat: model matrix for straight line
     ## spline.mat: model matrix for splines
     ## lme.obj: unconstrained lme object from nlme
     ## size: number of samples from the posterior distribution
+
+    if (burn < 1) {
+        stop("Must burn at least 1 sample.")
+    }
 
     ## EBLUPS
     pop.coef <- as.matrix(coef(lme.obj, level = 1))
@@ -183,47 +29,53 @@ ExactGibbs <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
     n.splines <- n.terms - n.fixed
 
     ## Population and subject share the same constraint matrix
-    constrt.mat <- matrix(1, n.splines + 1, n.splines + 1)
-    constrt.mat[lower.tri(constrt.mat)] <- 0
-    constrt.mat <- rbind(0, constrt.mat)
+    constrt <- matrix(1, n.splines + 1, n.splines + 1)
+    constrt[lower.tri(constrt)] <- 0
+    constrt <- rbind(0, constrt)
+    constrt.inv <- solve(constrt[-1, , drop = FALSE])
 
-    ## Indices in the dataset for each subject
-    idx.sub <- tapply(seq_len(n), lme.obj$groups[, -1], function(x) x)
+    ## Indices of datapoints corresponding to each subject
+    fact.sub <- factor(lme.obj$groups[, -1],
+                       levels = unique(as.character(lme.obj$groups[, -1])))
+    idx.sub <- tapply(seq_len(n), fact.sub, function(x) x)
 
     ## Model matrix
     model.mat <- cbind(linear.mat, spline.mat)
 
     ## Variance of the conditional SUBJECT posterior
     ## Factor in front of the mean of the conditional SUBJECT posterior
-    M.inv.sub <- rep(list(solve(varcov.sub) * var.error), n.subject)
+    M.sub <- rep(list(solve(varcov.sub) * var.error), n.subject)
     cond.fact.sub <- list()             # factor of the conditional mean
     cond.var.sub <- list()              # varcov of the conditional dist.
     for (i in seq_len(n.subject)) {
-        M.inv.sub[[i]] <- solve(crossprod(model.mat[idx.sub[[i]], ]) +
-                                M.inv.sub[[i]])
-        cond.fact.sub[[i]] <- tcrossprod(M.inv.sub[[i]],
+        M.sub[[i]] <- solve(crossprod(model.mat[idx.sub[[i]], ]) +
+                                M.sub[[i]])
+        cond.fact.sub[[i]] <- tcrossprod(M.sub[[i]],
                                          model.mat[idx.sub[[i]], ])
-        cond.var.sub[[i]] <- var.error * M.inv.sub[[i]]
+        cond.var.sub[[i]] <- var.error * M.sub[[i]]
     }
 
     ## Variance of the conditional POPULATION posterior
     ## Factor in front of the mean of the conditional POPULATION posterior
-    M.inv.pop <- diag(c(rep(0, n.fixed), rep(var.error / var.pop, n.splines)))
-    M.inv.pop <- solve(crossprod(model.mat) + M.inv.pop)
-    cond.fact.pop <- tcrossprod(M.inv.pop, model.mat) # factor of the cond. mean
-    cond.var.pop <- var.error * M.inv.pop       # varcov of the cond. dist.
+    M.pop <- diag(c(rep(0, n.fixed), rep(var.error / var.pop, n.splines)))
+    M.pop <- solve(crossprod(model.mat) + M.pop)
+    cond.fact.pop <- tcrossprod(M.pop, model.mat) # factor of the cond. mean
+    cond.var.pop <- var.error * M.pop       # varcov of the cond. dist.
 
     ## Initialise current estimates, EBLUPS as initial population response curve
+    ## If EBLUPS is not monotone, make it monotone whilst retaining its shape AMAP.
+    ## grad.pop = gradients of the population curve
+
     curr.pop <- as.vector(pop.coef)
+    grad.pop <- crossprod(constrt, curr.pop)
+    grad.pop[grad.pop < 0.01] <- 0.01
+    curr.pop <- c(curr.pop[1], crossprod(constrt.inv, grad.pop))
+
     curr.sub <- matrix(NA, n.terms, n.subject)
 
     ## Record current individual curves contribution to the prediction.
     ## Essentially: model.mat %*% coef.sub
     curr.pred.sub <- rep(NA, n)
-
-    if (burn < 1) {
-        stop("Must burn at least 1 sample.")
-    }
 
     ## Sequence of the subject (indices for the "for" loop)
     seq.subject <- seq_len(n.subject)
@@ -242,7 +94,7 @@ ExactGibbs <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
             mu.sub <- cond.fact.sub[[j]] %*%
                 (y[idx] -  model.mat.sub %*% curr.pop)
             curr.sub[, j] <- rmvtgauss.lin(1, mu.sub, cond.var.sub[[j]],
-                                           Amat = constrt.mat,
+                                           Amat = constrt,
                                            Avec = avec.sub)
             curr.pred.sub[idx] <- model.mat.sub %*% curr.sub[, j]
         }
@@ -261,17 +113,23 @@ ExactGibbs <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
         mu.pop <- cond.fact.pop %*% (y - curr.pred.sub)
         start.gauss <- c(mu.pop[1], avec.pop[1] + 1, diff(avec.pop))
         curr.pop <- new.rmvtgauss.lin(1, mu.pop, cond.var.pop,
-                                      Amat = constrt.mat,
+                                      Amat = constrt,
                                       Avec = avec.pop,
                                       start = start.gauss,
                                       burnin = 50)
+
+        if (i %% 1000 == 0) {
+            cat(i, " samples burned.\n")
+        }
+
     }
 
     ## Initialise the output list
-    ## "res[[i]]" to access i th subject curve
-    ## "res$pop" to access population curve
-    res <- rep(list(matrix(NA, n.terms, size)), n.subject)
-    res$pop <- matrix(NA, n.terms, size)
+    ## "samples[[i]]" to access i th subject curve
+    ## "samples$pop" to access population curve
+    samples <- rep(list(matrix(NA, n.terms, size)), n.subject)
+    names(samples) <- names(idx.sub)
+    samples$population <- matrix(NA, n.terms, size)
 
     ## Generate posterior. Results are recorded
     for (i in seq_len(size)) {
@@ -286,11 +144,11 @@ ExactGibbs <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
         mu.pop <- cond.fact.pop %*% (y - curr.pred.sub)
         start <- c(mu.pop[1], avec.pop[1] + 1, diff(avec.pop))
         curr.pop <- new.rmvtgauss.lin(1, mu.pop, cond.var.pop,
-                                      Amat = constrt.mat,
+                                      Amat = constrt,
                                       Avec = avec.pop,
                                       start = start,
                                       burnin = 50)
-        res$pop[, i] <- curr.pop
+        samples$population[, i] <- curr.pop
 
         ## Simulate subject posterior (conditioned on previous population)
         ## Lower-bound vector for the subject posterior
@@ -303,76 +161,359 @@ ExactGibbs <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
             mu.sub <- cond.fact.sub[[j]] %*%
                 (y[idx] -  model.mat.sub %*% curr.pop)
             curr.sub[, j] <- rmvtgauss.lin(1, mu.sub, cond.var.sub[[j]],
-                                           Amat = constrt.mat,
+                                           Amat = constrt,
                                            Avec = avec.sub)
             curr.pred.sub[idx] <- model.mat.sub %*% curr.sub[, j]
-            res[[j]][, i] <- curr.sub[, j]
+            samples[[j]][, i] <- curr.sub[, j]
         }
 
         if (i %% 1000 == 0) {
             cat(i, " samples generated.\n")
         }
     }
+    means <- lapply(samples, rowMeans)
+    basis <- list(type = "tpf", knots = NA, degree = 1)
+    res <- list(means = means, samples = samples, basis = basis)
     return(res)
 }
 
 
 
-linear.mat <- X
-spline.mat <- Z
-lme.obj <- fit2
-post <- ExactGibbs(y, linear.mat, spline.mat, lme.obj, 100, 10)
-post2 <- ExactGibbs(y, linear.mat, spline.mat, lme.obj, 10000, 100)
 
 
+SubjectQuad <- function(y, quad.mat, spline.mat, lme.obj, knots, limits,
+                        size = 100, burn = size / 10) {
+    ## y : response used in lme.obj (better be sorted according to subjects
+    ##     indices)
+    ## quad.mat: model matrix for quadratic polynomial
+    ## spline.mat: model matrix for quadratic splines
+    ## lme.obj: unconstrained lme object from nlme
+    ## knots : the knots locations
+    ## limits: the range on which the monotonicity constraint is applied
+    ## size: number of samples from the posterior distribution
 
-PlotLinSpline <- function(coefs, knots, limits, data) {
-
-    if (is.vector(coefs)) {
-        coefs <- as.matrix(coefs)
-    } else if (!is.matrix(coefs)) {
-        stop("coefs must be a matrix")
+    if (burn < 1) {
+        stop("Must burn at least 1 sample.")
     }
 
-    if (!is.vector(knots) || !is.vector(limits)) {
-        stop("knots and limits must be vectors")
+    ## EBLUPS
+    pop.coef <- as.matrix(coef(lme.obj, level = 1))
+    kappa <- c(min(limits), knots, max(limits))
+    names(kappa) <- NULL
+
+    ## REML variance covariance
+    var.error <- lme.obj$sigma^2
+    varcov.list <- lapply(lme.obj$modelStruct$reStruct, as.matrix)
+    varcov.list <- lapply(varcov.list, function (x) { x * var.error })
+    var.pop <- varcov.list[[2]][1, 1]
+    varcov.sub <- varcov.list[[1]]
+
+    ## Initialise various lengths
+    n <- length(y)
+    n.subject <- lme.obj$dims$ngrps[1]
+    n.terms <- lme.obj$dims$qvec[1]
+    n.fixed <- lme.obj$dims$ncol[3]
+    n.splines <- lme.obj$dims$qvec[2]
+    n.knots <- length(knots)
+
+    if ((n.fixed + n.splines) != n.terms) {
+        stop("Number of fixed or spline terms incorrect.")
     }
 
-    rownames(coefs) <- NULL
-    names(knots) <- NULL
-    time <- c(seq(min(limits), max(limits), length.out = 100), knots)
-    time <- time[order(time)]
-    basis <- outer(time, knots, `-`)
-    basis <- basis * (basis > 0)
-    model.mat <- cbind(1, time, basis, deparse.level = 0)
-    y <- model.mat %*% coefs
-    plot.data <- melt(y)
-    plot.data$time <- rep(time, times = NCOL(coefs))
+    ## Population and subject share the same constraint matrix
+    constrt <- -2 * outer(knots, c(knots[-1], max(limits)), `-`)
+    constrt[lower.tri(constrt)] <- 0
+    constrt <- cbind(0, 0, constrt, deparse.level = 0)
+    constrt <- rbind(0, 1, 2 * kappa, constrt, deparse.level = 0)
+    constrt.inv <- solve(constrt[-1, , drop = FALSE])
 
-    if (missing(data)) {
-        ggplot() +
-            geom_line(aes(time, value, group = X2, col = factor(X2)), plot.data)
-    } else if (is.data.frame(data)) {
-        ggplot() +
-            geom_line(aes(time, value, group = X2, col = factor(X2)), plot.data) +
-            geom_point(aes(data[[1]], data[[2]], col = factor(data[[3]])))
+    colnames(constrt) <- NULL
+    rownames(constrt) <- NULL
+
+    ## Indices of datapoints corresponding to each subject
+    fact.sub <- factor(lme.obj$groups[, -1],
+                       levels = unique(as.character(lme.obj$groups[, -1])))
+    idx.sub <- tapply(seq_len(n), fact.sub, function(x) x)
+
+    ## Model matrix
+    model.mat <- cbind(quad.mat, spline.mat)
+
+    ## Variance of the conditional SUBJECT posterior
+    ## Factor in front of the mean of the conditional SUBJECT posterior
+    M.sub <- rep(list(solve(varcov.sub) * var.error), n.subject)
+    cond.fact.sub <- list()             # factor of the conditional mean
+    cond.var.sub <- list()              # varcov of the conditional dist.
+    for (i in seq_len(n.subject)) {
+        M.sub[[i]] <- solve(crossprod(model.mat[idx.sub[[i]], ]) +
+                                M.sub[[i]])
+        cond.fact.sub[[i]] <- tcrossprod(M.sub[[i]],
+                                         model.mat[idx.sub[[i]], ])
+        cond.var.sub[[i]] <- var.error * M.sub[[i]]
     }
+
+    ## Variance of the conditional POPULATION posterior
+    ## Factor in front of the mean of the conditional POPULATION posterior
+    M.pop <- diag(c(rep(0, n.fixed), rep(var.error / var.pop, n.splines)))
+    M.pop <- solve(crossprod(model.mat) + M.pop)
+    cond.fact.pop <- tcrossprod(M.pop, model.mat) # factor of the cond. mean
+    cond.var.pop <- var.error * M.pop       # varcov of the cond. dist.
+
+    ## Initialise current estimates, EBLUPS as initial population response curve
+    ## If EBLUPS is not monotone, make it monotone whilst retaining its shape AMAP.
+    curr.pop <- as.vector(pop.coef)
+    grad.pop <- crossprod(constrt, curr.pop)
+    grad.pop[grad.pop < 0.01] <- 0.01
+    curr.pop <- c(curr.pop[1], crossprod(constrt.inv, grad.pop))
+
+    curr.sub <- matrix(NA, n.terms, n.subject)
+
+    ## Record current individual curves contribution to the prediction.
+    ## Essentially: model.mat %*% coef.sub
+    curr.pred.sub <- rep(NA, n)
+
+    ## Sequence of the subject (indices for the "for" loop)
+    seq.subject <- seq_len(n.subject)
+
+    ## Starting values for rmvtgauss.lin when generating SUBJECTS
+    start.sub <- rep(0, n.terms)
+
+    ## Burning period. Results are discarded
+    for (k in seq_len(burn)) {
+
+        ## Simulate subject posterior (conditioned on previous population)
+        ## Lower-bound vector for the subject posterior
+        lower.sub <- -1 * crossprod(constrt, curr.pop)
+
+        ## Generate an individual curve for each subject
+        for (i in seq.subject) {
+            idx <- idx.sub[[i]]
+            X.i <- model.mat[idx, , drop = FALSE]
+            mu.sub <- cond.fact.sub[[i]] %*% (y[idx] -  X.i %*% curr.pop)
+            curr.sub[, i] <- rmvtgauss.lin(1, mu.sub, cond.var.sub[[i]],
+                                           Amat = constrt,
+                                           Avec = lower.sub,
+                                           start = start.sub,
+                                           burnin = 50)
+            curr.pred.sub[idx] <- X.i %*% curr.sub[, i]
+        }
+
+
+        if (k >  burn) {
+            break
+        }
+
+        ## Simulated population posterior (conditioned on current subject)
+        ## Lower-bound vector for the population posterior
+        lower.pop <- crossprod(constrt, curr.sub)
+        lower.pop <- -1 * apply(lower.pop, 1, min)
+        lower.pop[lower.pop < 0] <- 0
+
+        ## Generate a population curve
+        mu.pop <- cond.fact.pop %*% (y - curr.pred.sub)
+        start.pop <- c(mu.pop[1], crossprod(constrt.inv, lower.pop + 0.01))
+        curr.pop <- new.rmvtgauss.lin(1, mu.pop, cond.var.pop,
+                                      Amat = constrt,
+                                      Avec = lower.pop,
+                                      start = start.pop,
+                                      burnin = 50)
+
+        if (k %% 1000 == 0) {
+            cat(k, " samples burned.\n")
+        }
+
+    }
+
+    ## Initialise the output list
+    ## "res[[i]]" to access i th subject curve
+    ## "res$pop" to access population curve
+    res <- rep(list(matrix(NA, n.terms, size)), n.subject)
+    names(res) <- names(idx.sub)
+    res$population <- matrix(NA, n.terms, size)
+
+    ## Generate posterior. Results are recorded
+    for (k in seq_len(size)) {
+
+        ## Simulated population posterior (conditioned on current subject)
+        ## Lower-bound vector for the population posterior
+        lower.pop <- crossprod(constrt, curr.sub)
+        lower.pop <- -1 * apply(lower.pop, 1, min)
+        lower.pop[lower.pop < 0] <- 0
+
+        ## Generate a population curve
+        mu.pop <- cond.fact.pop %*% (y - curr.pred.sub)
+        start.pop <- c(mu.pop[1], crossprod(constrt.inv, lower.pop + 0.01))
+        curr.pop <- new.rmvtgauss.lin(1, mu.pop, cond.var.pop,
+                                      Amat = constrt,
+                                      Avec = lower.pop,
+                                      start = start.pop,
+                                      burnin = 50)
+        res$population[, k] <- curr.pop
+
+        ## Simulate subject posterior (conditioned on previous population)
+        ## Lower-bound vector for the subject posterior
+        lower.sub <- -1 * crossprod(constrt, curr.pop)
+
+        ## Generate an individual curve for each subject
+        for (i in seq.subject) {
+            idx <- idx.sub[[i]]
+            X.i <- model.mat[idx, , drop = FALSE]
+            mu.sub <- cond.fact.sub[[i]] %*%
+                (y[idx] -  X.i %*% curr.pop)
+            curr.sub[, i] <- rmvtgauss.lin(1, mu.sub, cond.var.sub[[i]],
+                                           Amat = constrt,
+                                           Avec = lower.sub,
+                                           start = start.sub,
+                                           burnin = 50)
+            curr.pred.sub[idx] <- X.i %*% curr.sub[, i]
+            res[[i]][, k] <- curr.sub[, i]
+        }
+
+        if (k %% 1000 == 0) {
+            cat(k, " samples generated.\n")
+        }
+    }
+    return(res)
 }
 
-j <- 1000
-one.set <- matrix(NA, n.terms, n.subject + 1)
-colnames(one.set) <- with(fit2$groups, c(levels(sub.level), "population"))
-one.set[, NCOL(one.set)] <- post2$pop[, j]
-for (i in seq_len(n.subject)) {
-    one.set[, i] <- post2$pop[, j] + post2[[i]][, j]
+
+#' Fit a monotonic linear B-spline model.
+#'
+#' \code{BasisLin} fit a monotonic linear B-spline model which gives population
+#' and subject-specific curves.
+#'
+#' This model is fitted in a Bayesian framework, that is, this routine gives the
+#' samples drawing from the posterior distribution associated to each regression
+#' coefficients.
+#'
+#' @param data First and second columns correspond to explanatory (x) and
+#'     response (y) data respectively. The third column specifies the subject
+#'     (group) to each datapoint corresponds to. Required.
+#'
+#' @param K The number of (inner) knots. The knots are equally spaced between
+#'     \code{range(data[[1]])}. Required.
+#'
+#' @param shape Specify the shape of the response curves. Default is (monotonic)
+#'     "increasing". Possible values are "increasing", "decreasing" ...
+#'
+#' @param size The numbre of samples to be drawn from the posterior.
+#'
+#' @param burn The number of samples to burn before recording.
+#'
+#' @return A list of (K + 1) matrices containing samples from the
+#'     posteriors. The dimension of each matrix is \code{K + 2} \times
+#'     \code{size}.
+SubjectsBs <- function(data, K, shape = "increasing", size = 100,
+                     burn = size / 10) {
+
+    deg <- 1
+
+    x <- data[[1]]
+    y <- data[[2]]
+    grp <- data[[3]]
+
+    idx.sub <- tapply(seq_len(nrow(data)), grp, function(x) x)
+    n.subject <- length(idx.sub)
+    n.terms <- K + 2
+
+
+    ## Construct design matrix and its cross-products
+    dist <- diff(range(x)) / (K + 1)
+    knots <- seq(min(x) - deg*dist, max(x) + deg*dist, len = K + 2*(deg + 1))
+    B.pop <- splines::splineDesign(knots, x, ord = deg + 1)
+    B.pop.sq <- crossprod(B.pop)
+    B.sub.sq <- list()
+    for (i in seq_len(n.subject)) {
+        B.sub.sq[[i]] <- crossprod(B.pop[idx.sub[[i]], ])
+    }
+    names(B.sub.sq) <- names(idx.sub)
+
+    ## Construct the constraint matrix and its cross-product
+    D <- matrix(0, n.terms - deg, n.terms)
+    if (shape == "increasing") {
+        D[col(D) == row(D)] <- -1
+        D[col(D) == (row(D) + 1)] <- 1
+    } else if (shape == "decreasing") {
+        D[col(D) == row(D)] <- 1
+        D[col(D) == (row(D) + 1)] <- -1
+    }
+    D.sq <- crossprod(D)
+    D.t <- t(D)
+
+    ## Initial (current) values
+    c.pop <- seq(0, 1, len = n.terms)
+    c.sub <- matrix(0, n.terms, n.subject)
+    c.veps <- 0.077^2
+    c.vpop <- 4.29^2
+    c.vsub <- 1.74^2
+
+    ## Initial prediction contribution by subject specific effects
+    pred.sub <- rep(0, nrow(data))
+    for (i in seq_len(n.subject)) {
+        idx <- idx.sub[[i]]
+        pred.sub[idx] <- B.pop[idx, ] %*% c.sub[, i]
+    }
+
+
+    ## Initialise the output list, ordered by the order of levels(grp)
+    ## "samples[[i]]" to access the i^th subject (in levels(grp)) curve
+    ## "samples$pop" to access the population curve
+    samples <- rep(list(matrix(NA, n.terms, size)), n.subject)
+    names(samples) <- names(idx.sub)
+    samples$population <- matrix(NA, n.terms, size)
+
+    ## Burnin step
+    for (k in seq_len(burn + size)) {
+        ## Update population estimates
+        M.pop <- solve(B.pop.sq + (c.veps / c.vpop) * D.sq)
+        mu.pop <- tcrossprod(M.pop, B.pop) %*% (y - pred.sub)
+        sig.pop <- c.veps * M.pop
+
+        lower.pop <- D %*% c.sub
+        lower.pop <- -1 * apply(lower.pop, 1, min)
+        lower.pop[lower.pop < 0] <- 0
+
+        c.pop <- new.rmvtgauss.lin(1, mu.pop, sig.pop,
+                                   Amat = D.t,
+                                   Avec = lower.pop,
+                                   start = c.pop,
+                                   burnin = 50)
+        if (k > burn) {
+            samples$population[, k - burn] <- c.pop
+        }
+
+        ## Update prediction contribution by the population curve.
+        pred.pop <- B.pop %*% c.pop
+        y.diff.pop <- y - pred.pop
+
+        ## Update subject specific estimates
+        lower.sub <- -1 * (D %*% c.pop)
+
+        for (i in seq_len(n.subject)) {
+            idx <- idx.sub[[i]]
+            M.sub <- solve(B.sub.sq[[i]] + diag(c.veps / c.vsub, n.terms))
+            mu.sub <- tcrossprod(M.sub, B.pop[idx, ]) %*% y.diff.pop[idx]
+            sig.sub <- c.veps * M.sub
+
+            c.sub[, i] <- new.rmvtgauss.lin(1, mu.sub, sig.sub,
+                                            Amat = D.t,
+                                            Avec = lower.sub,
+                                            start = c.sub[, i],
+                                            burnin = 50)
+
+            ## Update prediction contribution by subject curves
+            pred.sub[idx] <- B.pop[idx, ] %*% c.sub[, i]
+
+            if (k > burn) {
+                samples[[i]][, k - burn] <- c.sub[, i]
+            }
+        }
+    }
+
+    ## Return posterior mean, samples, and information regarding the basis
+    ## functions.
+    means <- lapply(samples, rowMeans)
+    basis <- list(type = "bs", knots = knots, degree = deg)
+    res <- list(means = means, samples = samples, basis = basis)
+    return(res)
 }
-PlotLinSpline(one.set, knots, range(scal.time),
-              data.frame(scal.time, y, fit2$groups$sub.level))
-
-uncon.set <- cbind(t(coef(fit2)), t(coef(fit2, level = 1)))
-colnames(uncon.set) <- with(fit2$groups, c(levels(sub.level), "population"))
-PlotLinSpline(uncon.set, knots, range(scal.time),
-              data.frame(scal.time, y, fit2$groups$sub.level))
-
-hist(post[[1]][1, -(1:100)])
 
