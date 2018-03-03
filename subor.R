@@ -1,3 +1,4 @@
+
 MultiVarCov <- function(restruct, resid.var = NA) {
 
     ## Return a list of variance-covariance matrices from a "reStruct" object.
@@ -218,371 +219,174 @@ PriorLogFac <- function(n.terms, n.subject) {
     }
 }
 
-new.rmvtgauss.lin <- function (n, mu, Sigma, PrecMat = FALSE,
-                               factorised = FALSE, Amat, Avec, start,
-                               burnin = 1, thin = 1) {
-    if (length(n) == 1) {
-        n <- as.integer(n)
+#' Construct a difference matrix
+#'
+#' \code{DiffMat} returns a difference matrix of an arbitrary order and size.
+#'
+#' This function returns a \eqn{k^{th}} order difference matrix \eqn{D}, such
+#' that \eqn{Dx} gives a vector of \eqn{k^{th}} order differences of \eqn{x}.
+#' The parameter \code{size} is usually the dimension of \eqn{x}.
+#'
+#' @param size the column size of the difference matrix. Required.
+#'
+#' @param k the order of difference. Required.
+#'
+#' @return A \code{size - k} by \code{size} matrix.
+
+DiffMat <- function(size, k) {
+    if (size <= k) {
+        stop("Order of difference greater than column size.")
+    }
+
+    D <- diag(1, size)
+    D[(col(D) + 1) == row(D)] <- -1
+    D <- D[-1, ]
+    if (k == 1) {
+        return(D)
     } else {
-        n <- length(n)
+        return(DiffMat(size - 1, k - 1) %*% D)
     }
-    if (is.na(n) || n < 0) {
-        stop("argument 'n' invalid")
-    }
-    if (missing(mu)) {
-        stop("argument 'mu' is missing with no default")
-    }
-    mu <- as.numeric(mu)
-    d <- length(mu)
-    if (missing(Sigma)) {
-        stop("argument 'Sigma' is missing with no default")
-    }
-    Sigma <- as.matrix(Sigma)
-    if (missing(Amat)) {
-        stop("argument 'Amat' is missing with no default")
-    }
-    Amat <- as.matrix(Amat)
-    if (missing(Avec)) {
-        stop("argument 'Avec' is missing with no default")
-    }
-    Avec <- as.numeric(Avec)
-    if (missing(start)) {
-        start <- rep(0, d)
-    }
-    start <- as.numeric(start)
-    if (length(burnin) > 1) {
-        warning("'burnin' has length > 1; using first component")
-        burnin <- as.numeric(burnin[1])
-    }
-    if (length(thin) > 1) {
-        warning("'thin' has length > 1; using first component")
-        thin <- as.numeric(thin[1])
-    }
-    if (!is.numeric(Sigma) || !is.numeric(Amat) || !is.numeric(burnin) ||
-        !is.numeric(thin)) {
-        stop("some arguments are not numeric")
-    }
-    if (any(is.na(mu)) || any(is.na(Sigma)) || any(is.na(Amat)) ||
-        any(is.na(Avec)) || any(is.na(start)) || is.na(burnin) ||
-        is.na(thin)) {
-        stop("some arguments contain NAs")
-    }
-    if (!isTRUE(all.equal(dim(Sigma), c(d, d)))) {
-        stop("arguments 'mu' and 'Sigma' are incompatible")
-    }
-    if (length(start) != d) {
-        stop("arguments 'mu' and 'start' are incompatible")
-    }
-    if (NROW(Amat) != d) {
-        stop("arguments 'mu' and 'Amat' are incompatible")
-    }
-    if (NCOL(Amat) != length(Avec)) {
-        stop("arguments 'Amat' and 'Avec' are incompatible")
-    }
-
-    if (PrecMat) {
-        Sigma <- solve(Sigma)
-    }
-
-    if (!factorised) {
-        Right <- chol(Sigma)
-    }
-
-    Bmat <- Right %*% Amat
-
-    Bvec <- Avec - crossprod(Amat, mu)
-
-    ## eigv.Sigma <- eigen(Sigma)
-    ## sqrt.Sigma <- with(eigv.Sigma, tcrossprod(vectors %*% diag(sqrt(values)),
-    ##                                           vectors))
-
-    new.start <- backsolve(Right, start - mu, transpose = TRUE)
-    ## new.start <- solve(sqrt.Sigma, start - mu)
-
-    res <- matrix(NA, nrow = d, ncol = n)
-    for (i in 1:burnin) {
-        tmpmat <- new.start * Bmat
-        for (dd in 1:d) {
-            tmpvec <- Bvec - colSums(tmpmat[-dd, , drop = FALSE])
-            ind <- Bmat[dd, , drop = FALSE] > 0
-            if (sum(ind) > 0) {
-                left <- max(tmpvec[ind]/Bmat[dd, ind])
-            } else {
-                left <- -Inf
-            }
-            ind <- Bmat[dd, , drop = FALSE] < 0
-            if (sum(ind) > 0) {
-                right <- min(tmpvec[ind]/Bmat[dd, ind])
-            } else {
-                right <- Inf
-            }
-            if (left > right) {
-                browser()
-                stop("inconsistent constraints")
-            }
-            new.start[dd] <- rtgauss(1, left = left, right = right)
-            tmpmat[dd, ] <- new.start[dd] * Bmat[dd, , drop = FALSE]
-        }
-    }
-    res[, 1] <- new.start
-    if (n > 1) {
-        for (i in 2:n) {
-            for (j in 1:thin) {
-                tmpmat <- new.start * Bmat
-                for (dd in 1:d) {
-                  tmpvec <- Bvec - colSums(tmpmat[-dd, , drop = FALSE])
-                  ind <- Bmat[dd, , drop = FALSE] > 0
-                  if (sum(ind) > 0) {
-                    left <- max(tmpvec[ind]/Bmat[dd, ind])
-                  } else {
-                    left <- -Inf
-                  }
-                  ind <- Bmat[dd, , drop = FALSE] < 0
-                  if (sum(ind) > 0) {
-                    right <- min(tmpvec[ind]/Bmat[dd, ind])
-                  } else {
-                    right <- Inf
-                  }
-                  if (left > right) {
-                      stop("inconsistent constraints")
-                  }
-                  new.start[dd] <- rtgauss(1, left = left, right = right)
-                  tmpmat[dd, ] <- new.start[dd] * Bmat[dd, , drop = FALSE]
-                }
-            }
-            res[, i] <- new.start
-        }
-    }
-
-    return(crossprod(Right, res) + mu)
-    ## return(crossprod(sqrt.Sigma, res) + mu)
 }
 
 
-#' Plot the means of linear spline models.
+#' Construct an equidistant B-splines design matrix
 #'
-#' \code{PlotLinMean} plots linear splines response curves that correspond to
-#' each posterior means.
+#' \code{BSplineDesign} returns an equidistant B-splines design matrix without
+#' explicitly specifying the location of the knots.
 #'
-#' Plot the linear splines response curves that correspond to the posterior
-#' means of the population and subject-specific posteriors, over the region
-#' given in \code{limits}. The locations of knots should be supplied. A layer of
-#' scatterplot can be added on top of it.
+#' The knots locations are the minimum and maximum of \code{x}, and \code{K}
+#' equidistant points between these two extrema. The B-splines are equidistant,
+#' i.e. no multiple knots at both ends of \eqn{x}. This function uses
+#' \code{splines::splineDesign}.
 #'
-#' @param post a list of matrices whose columns are the samples from the
-#'     posterior. \code{post[[i]]} should give a matrix that contains the
-#'     samples from the \eqn{i^th} subject posterior. Likewise, \code{post$pop}
-#'     corresponds to the population posterior. Required.
+#' @param x predictor vector. Required.
 #'
-#' @param knots a vector of numeric that specifies the locations of the knots
-#'     used in the linear splines model. The length of \code{knots} should be
-#'     two less than the \code{NROW} of the matrices in \code{post}. Required.
+#' @param K number of inner knots. Required.
 #'
-#' @param limits a vector of length 2 that specifies the x region on which the
-#'     response curves should be plotted. Required.
+#' @param deg the degree of polynomial which the B-splines span. Required.
 #'
-#' @param data a data frame that gives that data for the scatterplot. First,
-#'     second, and third columns should correspond to the x-coordinates,
-#'     y-coordinates, and a factor that specifies the subjects to which the
-#'     datapoints correspond. Required
+#' @param EPS tolerance error.
 #'
-#' @return A nice graph of subject-specific curves.
-PlotLinMean <- function(post, knots, limits, data) {
-
-    n.curves <- length(post)
-    n.terms <- NROW(post$pop)
-
-    ## Initialise the regression coefficients for each response curve.
-    mean.set <- matrix(NA, n.terms, n.curves)
-    colnames(mean.set) <- names(post)
-    mean.set[, n.curves] <- rowMeans(post$pop)
-    for (i in seq_len(n.curves - 1)) {
-        mean.set[, i] <- mean.set[, n.curves] + rowMeans(post[[i]])
-    }
-    PlotLinSpline(mean.set, knots, limits, data)
+#' @return a list with components `design' (\code{length(x)} by \code{K + deg + 1}
+#'     design matrix) and all `knots' (inner and outer).
+BSplineDesign <- function(x, K, deg, EPS = 1e-6) {
+    dist <- diff(range(x)) / (K + 1)
+    knots <- seq(min(x) - (deg * dist) - EPS, max(x) + (deg * dist) + EPS,
+                 len = K + 2 * (deg + 1))
+    res <- list()
+    res$design <- splines::splineDesign(knots, x, ord = deg + 1)
+    res$knots <- knots
+    return(res)
 }
 
 
-#' Plot a linear spline model.
-#'
-#' \code{PlotLinSpline} plots linear splines response curves from the given
-#' coefficients.
-#'
-#' Plot the linear splines response curves from the given coefficients over the
-#' region given in \code{limits}. The locations of knots should be supplied. A
-#' layer of scatterplot can be added on top of it.
-#'
-#' @param coefs A matrix whose columns are the coefficients of corresponding
-#'     curves. In other words, the number of columns is equal to the number of
-#'     curves. The column names of this matrix will be used as the names of
-#'     corresponding curves. The "population" curve will be colored in
-#'     black. Required.
-#'
-#' @param knots A vector of numeric that specifies the locations of the knots
-#'     used in the linear splines model. The length of \code{knots} should be
-#'     two less than the \code{NROW} of the matrices in \code{post}. Required.
-#'
-#' @param bases The type of bases used for fitting the model. Possible values
-#'     are "tpf": truncated power functions; "bs": b-splines.
-#'
-#' @param limits A vector of length 2 that specifies the x region on which the
-#'     response curves should be plotted. Required.
-#'
-#' @param data A data frame that gives that data for the scatterplot. First,
-#'     second, and third columns should correspond to the x-coordinates,
-#'     y-coordinates, and a factor that specifies the subjects to which the
-#'     datapoints correspond. The names of the factor should agree with that
-#'     provided in the \code{coefs} matrix.
-#'
-#' @return A nice graph of subject-specific curves.
-PlotLinSpline <- function(coefs, knots, bases = "tpf", limits, data) {
-
-    library(ggplot2)
-
-    if (is.vector(coefs)) {
-        coefs <- as.matrix(coefs)
-    } else if (!is.matrix(coefs)) {
-        stop("coefs must be a matrix")
+## Return the constraint matrix A, where Ax > 0.
+## size : column size of the matrix
+## shape : increasing, decreasing
+BSplineConstMat <- function(size, shape) {
+    if (shape == "increasing") {
+        A <- diag(1, size)
+        A[(col(A) + 1) == row(A)] <- -1
+        A <- A[-1, ]
+        return(A)
+    } else if (shape == "decreasing") {
+        warning("decresing cases untested.")
+        A <- diag(1, size)
+        A[(col(A) + 1) == row(A)] <- -1
+        A <- A[-1, ]
+        return(-1 * A)
+    } else {
+        stop("Unrecognised shape.")
     }
+}
 
-    if (!is.vector(knots) || !is.vector(limits)) {
-        stop("knots and limits must be vectors")
+## Return a design matrix at quartile (or supplied) knots, and all knots.
+## x: all the explanatory data
+## K: number of inner knots, or a vector of all knots (including extrema)
+## deg: degree of the spline polynomial
+TpfDesign <- function(x, K, deg) {
+
+    res <- list()
+
+    if (length(K) == 1 && is.numeric(K)) {
+        knots <- quantile(unique(x), seq(0, 1, len = K + 2))[-c(1, K + 2)]
+        names(knots) <- NULL
+        res$knots <- c(min(x), knots, max(x))
+    } else if (is.vector(K) && min(K) >= min(x) && max(K) <= max(x)) {
+        knots <- K[-c(1, length(K))]
+        res$knots <- K
+    } else {
+        stop("Invalid knots. Knots should be within the extrema.")
     }
-
-    rownames(coefs) <- NULL
     names(knots) <- NULL
 
-    ## "x" terms
-    x <- c(seq(min(limits), max(limits), length.out = 100), knots)
-    x <- x[order(x)]
-
-    if (bases == "tpf" && is.vector(knots) && is.numeric(knots)) {
-        ## spline basis terms for truncated power functions
-        basis <- outer(x, knots, `-`)
-        basis <- basis * (basis > 0)
-        model.mat <- cbind(1, x, basis, deparse.level = 0)
-    } else if (bases == "bs" && length(knots) == 1 && is.numeric(knots)) {
-        ## spline basis terms for b-splines
-        basis <- outer(x, knots, `-`)
-        basis <- basis * (basis > 0)
-        model.mat <- cbind(1, x, basis, deparse.level = 0)
+    splines <- outer(x, knots, `-`)
+    if (deg > 0 && deg < 3) {
+        splines <- splines^deg * (splines > 0)
+        res$design <- cbind(1, poly(x, degree = deg, raw = T, simple = TRUE),
+                            splines, deparse.level = 0)
+        colnames(res$design) <- NULL
     } else {
-        stop("Incompatible given knots and bases type.")
+        stop("Invalid degree.")
     }
 
-    ## Calculate the response and melt them into a data frame
-    y <- model.mat %*% coefs
-    plot.data <- reshape2::melt(y)
-    colnames(plot.data) <- c("points", "grps", "value")
+    ## if (deg == 1) {
+    ##     splines <- splines * (splines > 0)
+    ##     res$design <- cbind(1, x, splines, deparse.level = 0)
+    ## } else if (deg == 2) {
+    ##     splines <- splines^2 * (splines > 0)
+    ##     res$design <- cbind(1, x, x^2, splines, deparse.level = 0)
+    ## } else {
+    ##     stop("Invalid degree.")
+    ## }
 
-    # This step is not necessary (reorder group levels)
-    plot.data$grps <- factor(plot.data$grps, levels = colnames(coefs))
-
-    plot.data$x <- rep(x, times = NCOL(coefs))
-    pop.idx <- plot.data$grps %in% "population"
-
-
-    if (missing(data)) {
-        ggplot2::ggplot() +
-            ggplot2::geom_line(aes(x, y, group = grps, col = grps),
-                               plot.data[!pop.idx, ]) +
-            ggplot2::geom_line(aes(x, value), plot.data[pop.idx, ],
-                               col = "black")
-    } else if (is.data.frame(data)) {
-        ggplot2::ggplot() +
-            ggplot2::geom_line(aes(x, value, group = grps, col = grps),
-                               plot.data[!pop.idx, ]) +
-            ggplot2::geom_point(aes(data[[1]], data[[2]], col = data[[3]])) +
-            ggplot2::geom_line(aes(x, value), plot.data[pop.idx, ],
-                               col = "black")
-
-    }
+    return(res)
 }
 
-
-
-#' Plot a quadratic spline model.
-#'
-#' \code{PlotQuadSpline} plots quadratic splines response curves from the given
-#' coefficients.
-#'
-#' Plot the quadratic splines response curves from the given coefficients over the
-#' region given in \code{limits}. The locations of knots should be supplied. A
-#' layer of scatterplot can be added on top of it.
-#'
-#' @param coefs a matrix whose columns are the coefficients of corresponding
-#'     curves. In other words, the number of columns is equal to the number of
-#'     curves. The column names of this matrix will be used as the names of
-#'     corresponding curves. The "population" curve will be colored in
-#'     black. Required.
-#'
-#' @param knots a vector of numeric that specifies the locations of the knots
-#'     used in the linear splines model. The length of \code{knots} should be
-#'     two less than the \code{NROW} of the matrices in \code{post}. Required.
-#'
-#' @param limits a vector of length 2 that specifies the x region on which the
-#'     response curves should be plotted. Required.
-#'
-#' @param data a data frame that gives that data for the scatterplot. First,
-#'     second, and third columns should correspond to the x-coordinates,
-#'     y-coordinates, and a factor that specifies the subjects to which the
-#'     datapoints correspond. The names of the factor should agree with that
-#'     provided in the \code{coefs} matrix.
-#'
-#' @return A nice graph of subject-specific curves.
-PlotQuadSpline <- function(coefs, knots, limits, data) {
-
-    if (!(require(ggplot2) && require(reshape2))) {
-        stop("Couldn't load ggplot2 and reshape2")
-    }
-
-    if (is.vector(coefs)) {
-        coefs <- as.matrix(coefs)
-    } else if (!is.matrix(coefs)) {
-        stop("coefs must be a matrix")
-    }
-
-    if (!is.vector(knots) || !is.vector(limits)) {
-        stop("knots and limits must be vectors")
-    }
-
-    rownames(coefs) <- NULL
-    names(knots) <- NULL
-
-    ## "time" terms
-    time <- c(seq(min(limits), max(limits), length.out = 200), knots)
-    time <- time[order(time)]
-
-    ## spline basis terms
-    basis <- outer(time, knots, `-`)
-    basis <- basis * (basis > 0)
-    basis <- basis^2
-
-    ## model matrix
-    model.mat <- cbind(1, time, time^2, basis, deparse.level = 0)
-
-    ## Calculate the response and melt them into a data frame
-    y <- model.mat %*% coefs
-    plot.data <- melt(y)
-    colnames(plot.data) <- c("points", "grps", "value")
-
-    # This is a reassurance step (reorder group levels)
-    plot.data$grps <- factor(plot.data$grps, levels = colnames(coefs))
-
-    plot.data$time <- rep(time, times = NCOL(coefs))
-    pop.idx <- plot.data$grps %in% "population"
-
-    if (missing(data)) {
-        ggplot() +
-            geom_line(aes(time, y, group = grps, col = grps),
-                      plot.data[!pop.idx, ]) +
-            geom_line(aes(time, value), plot.data[pop.idx, ], col = "black")
-    } else if (is.data.frame(data)) {
-        ggplot() +
-            geom_line(aes(time, value, group = grps, col = grps),
-                      plot.data[!pop.idx, ]) +
-            geom_point(aes(data[[1]], data[[2]], col = data[[3]])) +
-            geom_line(aes(time, value), plot.data[pop.idx, ], col = "black")
-
+## Return the constraint matrix A, where Ax > 0.
+## knots: all knots, i.e. extrama of x and inner knots. If deg = 1, this can
+##        the number of inner knots
+## shape: increasing, decreasing
+## deg: degree of the polynomial splines
+TpfConstMat <- function(knots, shape, deg) {
+    if (deg == 1) {
+        if (length(knots) == 1) {
+            knots <- rep(NA, knots + 2) # a dummy knots vector
+        }
+        if (shape == "increasing") {
+            A <- diag(length(knots) - 1)
+            A[lower.tri(A)] <- 1
+            A <- cbind(0, A)
+            return(A)
+        } else if (shape == "decreasing") {
+            warning("decresing cases untested.")
+            A <- diag(length(knots) - 1)
+            A[lower.tri(A)] <- 1
+            A <- cbind(0, A)
+            return(-1 * A)
+        } else {
+            stop("Unrecognised shape.")
+        }
+    } else if (deg == 2) {
+        if (!is.vector(knots, "numeric") || length(knots) == 1) {
+            stop("Knots vector must be supplied for quadratic spline.")
+        } else if (shape == "increasing") {
+            A <- 2 * outer(knots[-(1:2)], knots[-c(1, length(knots))], `-`)
+            A[upper.tri(A)] <- 0
+            A <- rbind(0, 0, A, deparse.level = 0)
+            A <- cbind(0, 1, 2 * knots, A, deparse.level = 0)
+            return(A)
+        } else if (shape == "decreasing") {
+            warning("decresing cases untested.")
+            A <- 2 * outer(knots[-(1:2)], knots[-c(1, length(knots))], `-`)
+            A[upper.tri(A)] <- 0
+            A <- rbind(0, 0, A, deparse.level = 0)
+            A <- cbind(0, 1, 2 * knots, A, deparse.level = 0)
+            return(-1 * A)
+        } else {
+            stop("Unrecognised shape.")
+        }
+    } else {
+        stop("Unrecognised spline degree.")
     }
 }

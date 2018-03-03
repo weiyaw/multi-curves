@@ -1,3 +1,4 @@
+source("subor.R")
 SubjectLin <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
                        burn = size / 10) {
     ## y : response used in lme.obj (better be sorted according to subjects
@@ -176,8 +177,6 @@ SubjectLin <- function(y, linear.mat, spline.mat, lme.obj, size = 100,
     res <- list(means = means, samples = samples, basis = basis)
     return(res)
 }
-
-
 
 
 
@@ -376,81 +375,65 @@ SubjectQuad <- function(y, quad.mat, spline.mat, lme.obj, knots, limits,
 }
 
 
-#' Fit a monotonic linear B-spline model.
-#'
-#' \code{BasisLin} fit a monotonic linear B-spline model which gives population
-#' and subject-specific curves.
-#'
-#' This model is fitted in a Bayesian framework, that is, this routine gives the
-#' samples drawing from the posterior distribution associated to each regression
-#' coefficients.
-#'
-#' @param data First and second columns correspond to explanatory (x) and
-#'     response (y) data respectively. The third column specifies the subject
-#'     (group) to each datapoint corresponds to. Required.
-#'
-#' @param K The number of (inner) knots. The knots are equally spaced between
-#'     \code{range(data[[1]])}. Required.
-#'
-#' @param shape Specify the shape of the response curves. Default is (monotonic)
-#'     "increasing". Possible values are "increasing", "decreasing" ...
-#'
-#' @param size The numbre of samples to be drawn from the posterior.
-#'
-#' @param burn The number of samples to burn before recording.
-#'
-#' @return A list of (K + 1) matrices containing samples from the
-#'     posteriors. The dimension of each matrix is \code{K + 2} \times
-#'     \code{size}.
-SubjectsBs <- function(data, K, shape = "increasing", size = 100,
-                     burn = size / 10) {
+## Truncated power function
+## data : 1st col x, 2nd col y, 3rd col groups
+## K : number of quantile (inner) knots, or a vector of inner knots
+## deg : degree of spline polynomial
+SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
+                        burn = size / 10) {
 
-    deg <- 1
+    ## if (deg != 1 && deg != 2) {
+    ##     stop("Invalid spline degree. Must be 1 or 2.")
+    ## }
 
     x <- data[[1]]
     y <- data[[2]]
     grp <- data[[3]]
 
-    idx.sub <- tapply(seq_len(nrow(data)), grp, function(x) x)
+    n.terms <- K + deg + 1
+    n.sample <- NROW(data)
+    idx.sub <- tapply(seq_len(n.sample), grp, function(x) x)
     n.subject <- length(idx.sub)
-    n.terms <- K + 2
-
 
     ## Construct design matrix and its cross-products
-    dist <- diff(range(x)) / (K + 1)
-    knots <- seq(min(x) - deg*dist, max(x) + deg*dist, len = K + 2*(deg + 1))
-    B.pop <- splines::splineDesign(knots, x, ord = deg + 1)
-    B.pop.sq <- crossprod(B.pop)
-    B.sub.sq <- list()
+    design <- TpfDesign(x, K, deg)
+    knots <- design$knots               # all knots (with extrema)
+    n.spline <- length(knots) - 2       # number of inner knots (w/o extrema)
+    X.pop <- design$design
+    X.pop.sq <- crossprod(X.pop)
+    rm(design)
+
+    X.sub.sq <- list()
     for (i in seq_len(n.subject)) {
-        B.sub.sq[[i]] <- crossprod(B.pop[idx.sub[[i]], ])
+        X.sub.sq[[i]] <- crossprod(X.pop[idx.sub[[i]], ])
     }
-    names(B.sub.sq) <- names(idx.sub)
+    names(X.sub.sq) <- names(idx.sub)
+
+    ## An idempotent matrix to extract the spline terms
+    Kmat <- diag(c(rep(0, deg + 1), rep(1, n.spline)))
+    idx.poly <- seq_len(deg + 1)        # index of polynomial terms
 
     ## Construct the constraint matrix and its cross-product
-    D <- matrix(0, n.terms - deg, n.terms)
-    if (shape == "increasing") {
-        D[col(D) == row(D)] <- -1
-        D[col(D) == (row(D) + 1)] <- 1
-    } else if (shape == "decreasing") {
-        D[col(D) == row(D)] <- 1
-        D[col(D) == (row(D) + 1)] <- -1
-    }
-    D.sq <- crossprod(D)
-    D.t <- t(D)
+    A <- TpfConstMat(knots, shape, deg)
+    A.t <- t(A)
+
+    ## Calculate an inverse of A to easily produce feasible states
+    A.inv <- diag(NCOL(A))
+    A.inv[row(A.inv) > diff(dim(A))] <- A
+    A.inv <- solve(A.inv)
 
     ## Initial (current) values
     c.pop <- seq(0, 1, len = n.terms)
     c.sub <- matrix(0, n.terms, n.subject)
-    c.veps <- 0.077^2
-    c.vpop <- 4.29^2
-    c.vsub <- 1.74^2
+
+    ## Initial prediction contribution by population effects
+    pred.pop <- X.pop %*% c.pop
 
     ## Initial prediction contribution by subject specific effects
     pred.sub <- rep(0, nrow(data))
     for (i in seq_len(n.subject)) {
         idx <- idx.sub[[i]]
-        pred.sub[idx] <- B.pop[idx, ] %*% c.sub[, i]
+        pred.sub[idx] <- X.pop[idx, ] %*% c.sub[, i]
     }
 
 
@@ -460,48 +443,90 @@ SubjectsBs <- function(data, K, shape = "increasing", size = 100,
     samples <- rep(list(matrix(NA, n.terms, size)), n.subject)
     names(samples) <- names(idx.sub)
     samples$population <- matrix(NA, n.terms, size)
+    samples$var.pop <- rep(NA, size)
+    samples$prec.poly <- array(NA, c(deg + 1, deg + 1, size))
+    samples$var.sub <- rep(NA, size)
+    samples$var.eps <- rep(NA, size)
+
+    ## hyperparameters of priors
+    ig.a <- 0.001
+    ig.b <- 0.001
+    wi.df <- 1
+    wi.sig <- diag(0.001, deg + 1)
 
     ## Burnin step
     for (k in seq_len(burn + size)) {
+        ## Update variances
+        c.vpop <- 1 / rgamma(1, shape = n.spline / 2 + ig.a,
+                             scale = 0.5 * crossprod(Kmat %*% c.pop) + ig.b)
+        c.vsub <- 1 / rgamma(1, shape = (n.subject * n.spline) / 2 + ig.a,
+                             scale = 0.5 * crossprod(c(Kmat %*% c.sub)) + ig.b)
+        c.ppoly <- rWishart(1, df = wi.df + n.subject,
+                            solve(wi.sig + tcrossprod(c.sub[idx.poly, ])))
+        resid.vec <- y - pred.pop - pred.sub
+        c.veps <- 1 / rgamma(1, shape = 0.5 * n.sample + ig.a,
+                             scale = 0.5 * crossprod(resid.vec) + ig.b)
+
+
         ## Update population estimates
-        M.pop <- solve(B.pop.sq + (c.veps / c.vpop) * D.sq)
-        mu.pop <- tcrossprod(M.pop, B.pop) %*% (y - pred.sub)
+        M.pop <- solve(X.pop.sq + (c.veps / c.vpop) * Kmat)
+        mu.pop <- tcrossprod(M.pop, X.pop) %*% (y - pred.sub)
         sig.pop <- c.veps * M.pop
 
-        lower.pop <- D %*% c.sub
+        lower.pop <- A %*% c.sub
         lower.pop <- -1 * apply(lower.pop, 1, min)
         lower.pop[lower.pop < 0] <- 0
 
-        c.pop <- new.rmvtgauss.lin(1, mu.pop, sig.pop,
-                                   Amat = D.t,
-                                   Avec = lower.pop,
-                                   start = c.pop,
-                                   burnin = 50)
+        ## Initialise the starting values of the truncated normal sampler
+        start.pop <- A.inv %*% c(mu.pop[1], (lower.pop + 0.1))
+
+        c.pop <- TruncatedNormal::rmvtgauss.lin(1, mu.pop, sig.pop,
+                                                Amat = A.t,
+                                                Avec = lower.pop,
+                                                start = start.pop,
+                                                burnin = 1000)
         if (k > burn) {
-            samples$population[, k - burn] <- c.pop
+            rec.idx <- k - burn
+            if (rec.idx %% 1000 == 0) {
+                cat(rec.idx, "samples generated. \n")
+            }
+            samples$population[, rec.idx] <- c.pop
+            samples$var.pop[rec.idx] <- c.vpop
+            samples$prec.poly[, , rec.idx] <- c.ppoly
+            samples$var.sub[rec.idx] <- c.vsub
+            samples$var.eps[rec.idx] <- c.veps
         }
 
         ## Update prediction contribution by the population curve.
-        pred.pop <- B.pop %*% c.pop
+        pred.pop <- X.pop %*% c.pop
         y.diff.pop <- y - pred.pop
 
         ## Update subject specific estimates
-        lower.sub <- -1 * (D %*% c.pop)
+        lower.sub <- -1 * (A %*% c.pop)
+
+        ## Initialise the starting values of the truncated normal sampler
+        ## start.sub <- rep(0, n.terms)
+        zeros <- rep(0, n.terms)
+
+        ## Calculate the precision matrix term
+        G.term <- diag(1 / c.vsub, n.terms)
+        G.term[1:NROW(c.ppoly), 1:NCOL(c.ppoly)] <- c.ppoly
+        G.term <- c.veps * G.term
 
         for (i in seq_len(n.subject)) {
             idx <- idx.sub[[i]]
-            M.sub <- solve(B.sub.sq[[i]] + diag(c.veps / c.vsub, n.terms))
-            mu.sub <- tcrossprod(M.sub, B.pop[idx, ]) %*% y.diff.pop[idx]
+            M.sub <- solve(X.sub.sq[[i]] + G.term)
+            mu.sub <- tcrossprod(M.sub, X.pop[idx, ]) %*% y.diff.pop[idx]
             sig.sub <- c.veps * M.sub
 
-            c.sub[, i] <- new.rmvtgauss.lin(1, mu.sub, sig.sub,
-                                            Amat = D.t,
-                                            Avec = lower.sub,
-                                            start = c.sub[, i],
-                                            burnin = 50)
+            c.sub[, i] <- TruncatedNormal::rmvtgauss.lin(1, mu.sub, sig.sub,
+                                                         Amat = A.t,
+                                                         Avec = lower.sub,
+                                                         start = zeros,
+                                                         burnin = 1000)
 
             ## Update prediction contribution by subject curves
-            pred.sub[idx] <- B.pop[idx, ] %*% c.sub[, i]
+            pred.sub[idx] <- X.pop[idx, ] %*% c.sub[, i]
 
             if (k > burn) {
                 samples[[i]][, k - burn] <- c.sub[, i]
@@ -511,9 +536,12 @@ SubjectsBs <- function(data, K, shape = "increasing", size = 100,
 
     ## Return posterior mean, samples, and information regarding the basis
     ## functions.
-    means <- lapply(samples, rowMeans)
-    basis <- list(type = "bs", knots = knots, degree = deg)
-    res <- list(means = means, samples = samples, basis = basis)
+    means <- lapply(samples[seq_len(n.subject + 1)], rowMeans)
+    basis <- list(type = "tpf", knots = knots, degree = deg)
+    info <- list(n.subject = n.subject, n.terms = n.terms)
+    data <- data.frame(x = x, y = y, grps = factor(grp))
+    res <- list(means = means, samples = samples, basis = basis, info = info,
+                data = data)
     return(res)
 }
 

@@ -1,0 +1,7 @@
+load("/Users/kenyon/Gdrive/master/algo/simulations/bspline-lin (1).rds")
+load("/Users/kenyon/Gdrive/master/algo/simulations/bspline-lin.rds")
+load("/Users/kenyon/Gdrive/master/algo/simulations/bspline-quad (1).rds")
+pwd()
+getwd()
+readRDS("bspline-lin (1)")
+readRDS("bspline-lin (1).rds")

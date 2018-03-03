@@ -3,7 +3,7 @@ library(nlme)
 library(microbenchmark)
 rm(list = ls())
 setwd("~/Gdrive/master/algo/")
-source("main.R")
+source("main-tpf.R")
 source("subor.R")
 sitka <- read.table("data/tsitka.txt", header = T)
 ##sitka <- read.table("data/sitka.txt", header = T)
@@ -76,6 +76,23 @@ source("subor.R")
 quad.co <- t(coef(quad.fm, level = 2))
 PlotQuadSpline(quad.co, knots.q, range(time.q),
                data.frame(time.q, y, quad.fm$groups$sub.level))
+
+
+
+## TEST MIXED MODEL LINEAR SPLINE (SubjectsTpf)
+rm(list = ls())
+sitka <- read.table("data/tsitka.txt", header = T)
+sitka <- with(sitka, data.frame(x = days / 674,
+                                y = log.size,
+                                grps = id.num))
+source("main-tpf.R")
+system.time(fm2 <- SubjectsTpf(sitka, 5, size = 100))
+saveRDS(fm2, "tpf-long.rds")
+source("graphs.R")
+PlotSpline(fm1, range(sitka$x), sitka)
+
+
+
 
 
 
