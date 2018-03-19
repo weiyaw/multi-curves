@@ -109,13 +109,6 @@ sitka10 <- with(sitka10, data.frame(x = days / 674,
 sitka10$grp.sub <- factor(sitka10$grp.sub,
                           levels = c("1", "2", "3", "4", "5",
                                      "60", "59", "56", "57", "58"))
-data <- sitka10
-K <- 5
-deg <- 2
-source("subor.R")
-shape <- "increasing"
-size <- 10
-TpfGetCoefs(pred.sub[['1']], X.pop[['1']], X.pop.sq[['1']], X.sub.sq[['1']],
-            lvl.sub[['1']], idx.sub[['1']], prc.eps)
-
-system.time(fm1 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 10))
+source("main-tpf.R")
+system.time(fm1 <- SubjectsTpf(sitka10, 5, deg = 2, shape = "increasing", size = 10))
+system.time(fm2 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 10))
