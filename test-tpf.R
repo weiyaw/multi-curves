@@ -89,10 +89,33 @@ source("main-tpf.R")
 system.time(fm2 <- SubjectsTpf(sitka, 5, size = 100))
 saveRDS(fm2, "tpf-long.rds")
 source("graphs.R")
+fm1 <- readRDS("simulations/tpf-lin.rds")
+fm2 <- readRDS("simulations/tpf-quad.rds")
 PlotSpline(fm1, range(sitka$x), sitka)
+PlotSpline(fm2, range(sitka$x), sitka)
 
+fm3 <- readRDS("simulations/bspline-lin.rds")
+fm4 <- readRDS("simulations/bspline-quad.rds")
+PlotSpline(fm3, range(sitka$x), sitka)
+PlotSpline(fm4, range(sitka$x), sitka)
 
+## TEST MIXED MODEL LINEAR SPLINE WITH MULTIPLE POPULATION (SubjectsTpfMul)
+rm(list = ls())
+sitka10 <- read.table("data/sitka10.txt", header = T)
+sitka10 <- with(sitka10, data.frame(x = days / 674,
+                                    y = log.size,
+                                    grp.sub = id.num,
+                                    grp.pop = ozone))
+sitka10$grp.sub <- factor(sitka10$grp.sub,
+                          levels = c("1", "2", "3", "4", "5",
+                                     "60", "59", "56", "57", "58"))
+data <- sitka10
+K <- 5
+deg <- 2
+source("subor.R")
+shape <- "increasing"
+size <- 10
+TpfGetCoefs(pred.sub[['1']], X.pop[['1']], X.pop.sq[['1']], X.sub.sq[['1']],
+            lvl.sub[['1']], idx.sub[['1']], prc.eps)
 
-
-
-
+system.time(fm1 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 10))

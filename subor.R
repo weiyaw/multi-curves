@@ -260,11 +260,8 @@ DiffMat <- function(size, k) {
 #' \code{splines::splineDesign}.
 #'
 #' @param x predictor vector. Required.
-#'
 #' @param K number of inner knots. Required.
-#'
 #' @param deg the degree of polynomial which the B-splines span. Required.
-#'
 #' @param EPS tolerance error.
 #'
 #' @return a list with components `design' (\code{length(x)} by \code{K + deg + 1}
