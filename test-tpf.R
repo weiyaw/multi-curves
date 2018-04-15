@@ -1,11 +1,9 @@
-library(TruncatedNormal)
 library(nlme)
-library(microbenchmark)
 rm(list = ls())
-setwd("~/Gdrive/master/algo/")
+setwd("~/Dropbox/master/algo/")
 source("main-tpf.R")
 source("subor.R")
-sitka <- read.table("data/tsitka.txt", header = T)
+sitka <- read.table("data/sitka10.txt", header = T)
 ##sitka <- read.table("data/sitka.txt", header = T)
 
 ## Initialise dataset and factors
@@ -81,12 +79,12 @@ PlotQuadSpline(quad.co, knots.q, range(time.q),
 
 ## TEST MIXED MODEL LINEAR SPLINE (SubjectsTpf)
 rm(list = ls())
-sitka <- read.table("data/tsitka.txt", header = T)
+sitka <- read.table("data/sitka5.txt", header = T)
 sitka <- with(sitka, data.frame(x = days / 674,
                                 y = log.size,
                                 grps = id.num))
 source("main-tpf.R")
-system.time(fm2 <- SubjectsTpf(sitka, 5, size = 100))
+system.time(fm2 <- get_tpf_old(sitka, 5, 2, size = 100, burn = 0))
 saveRDS(fm2, "tpf-long.rds")
 source("graphs.R")
 fm1 <- readRDS("simulations/tpf-lin.rds")
@@ -110,5 +108,83 @@ sitka10$grp.sub <- factor(sitka10$grp.sub,
                           levels = c("1", "2", "3", "4", "5",
                                      "60", "59", "56", "57", "58"))
 source("main-tpf.R")
+## single population
 system.time(fm1 <- SubjectsTpf(sitka10, 5, deg = 2, shape = "increasing", size = 10))
-system.time(fm2 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 10))
+
+system.time(fm2 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 100, burn = 0))
+## multiple population (1000 burn, independent start)
+fm2 <- readRDS("simulations/multi/multi-1k-bugless.rds")
+## multiple population (1000 burn, independent start, garbage)
+fm3 <- readRDS("simulations/multi/multi-10k.rds")
+source("graphs.R")
+plot_spline(fm1)
+plot_spline(fm2, c(0, 1))
+plot_spline(fm3, c(0, 1))
+plot_spline(fm4, c(0, 1))
+
+## multiple population (1000 burn, previous start)
+system.time(fm4 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 10000, burn = 0))
+
+source("main-tpf.R")
+
+system.time(fm4 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 1000, burn = 0))
+
+fm5 <- readRDS("simulations/multi/multi-sitka.rds")
+
+system.time(fm5 <- SubjectsTpfMul(sitka10, 5, deg = 2, shape = "increasing", size = 1000, burn = 0))
+
+source("graphs.R")
+fm7t <- truncate(fm7, 2000)
+plot_spline(fm7t)
+
+plot(fm5$samples$population$`1`[1, ])
+plot(fm5$samples$population$`1`[2, ])
+plot(fm5$samples$population$`1`[3, ])
+plot(fm5$samples$population$`1`[4, ])
+plot(fm5$samples$population$`1`[5, ])
+plot(fm5$samples$population$`1`[6, ])
+plot(fm5$samples$population$`1`[7, ])
+
+plot(fm5$samples$subject$`1`[1, "5", ])
+plot(fm5$samples$subject$`1`[2, "5", ])
+plot(fm5$samples$subject$`1`[3, "5", ])
+plot(fm5$samples$subject$`1`[4, "5", ])
+plot(fm5$samples$subject$`1`[5, "5", ])
+plot(fm5$samples$subject$`1`[6, "5", ])
+plot(fm5$samples$subject$`1`[7, "5", ])
+plot_spline(fm5)
+
+plot(fm6$samples$precision$pop)
+plot(fm6$samples$precision$sub)
+plot(fm6$samples$precision$poly[1, 1, 2000:10000])
+plot(fm6$samples$precision$poly[2, 2, 2000:10000])
+plot(fm6$samples$precision$poly[3, 3, 2000:10000])
+plot(fm6$samples$precision$poly[1, 2, 2000:10000])
+plot(fm6$samples$precision$poly[1, 3, 2000:10000])
+
+source("graphs.R")
+fm2t <- truncate(fm2, 300)
+plot_spline(fm2t)
+
+
+## Berkeley growth dataset
+fm6 <- readRDS("simulations/multi/multi-growth.rds")
+fm7 <- readRDS("simulations/multi/multi-growth-uncon.rds")
+
+plot(fm7$samples$population$hgtf[1, ])
+plot(fm7$samples$population$hgtf[2, ])
+plot(fm7$samples$population$hgtf[3, ])
+plot(fm7$samples$population$hgtf[4, ])
+plot(fm7$samples$population$hgtf[5, ])
+plot(fm7$samples$population$hgtf[6, ])
+plot(fm7$samples$population$hgtf[7, ])
+
+
+plot(fm6$samples$subject$hgtm[1, "boy01", ])
+plot(fm6$samples$subject$hgtm[2, "boy01", ])
+plot(fm6$samples$subject$hgtm[3, "boy01", ])
+plot(fm6$samples$subject$hgtm[4, "boy01", ])
+plot(fm6$samples$subject$hgtm[5, "boy01", ])
+plot(fm6$samples$subject$hgtm[6, "boy01", ])
+plot(fm6$samples$subject$hgtm[7, "boy01", ])
+

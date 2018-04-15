@@ -298,10 +298,11 @@ BSplineConstMat <- function(size, shape) {
 }
 
 ## Return a design matrix at quartile (or supplied) knots, and all knots.
+## The knots are taken at the quartiles, and min and max of x.
 ## x: all the explanatory data
 ## K: number of inner knots, or a vector of all knots (including extrema)
 ## deg: degree of the spline polynomial
-TpfDesign <- function(x, K, deg) {
+get_design_tpf <- function(x, K, deg) {
 
     res <- list()
 
@@ -309,11 +310,11 @@ TpfDesign <- function(x, K, deg) {
         knots <- quantile(unique(x), seq(0, 1, len = K + 2))[-c(1, K + 2)]
         names(knots) <- NULL
         res$knots <- c(min(x), knots, max(x))
-    } else if (is.vector(K) && min(K) >= min(x) && max(K) <= max(x)) {
+    } else if (is.vector(K) && is.numeric(K)) {
         knots <- K[-c(1, length(K))]
         res$knots <- K
     } else {
-        stop("Invalid knots. Knots should be within the extrema.")
+        stop("Supplied knots must a numeric vector.")
     }
     names(knots) <- NULL
 
@@ -345,7 +346,7 @@ TpfDesign <- function(x, K, deg) {
 ##        the number of inner knots
 ## shape: increasing, decreasing
 ## deg: degree of the polynomial splines
-TpfConstMat <- function(knots, shape, deg) {
+get_constmat_tpf <- function(knots, shape, deg) {
     if (deg == 1) {
         if (length(knots) == 1) {
             knots <- rep(NA, knots + 2) # a dummy knots vector
@@ -386,4 +387,37 @@ TpfConstMat <- function(knots, shape, deg) {
     } else {
         stop("Unrecognised spline degree.")
     }
+}
+
+truncate <- function(model, size) {
+    trc_idx <- -1 * seq_len(size)
+    helper_rm <- function(x) {
+        if (is.array(x)) {
+            if (length(dim(x)) == 3) {
+                x[, , trc_idx]
+            } else if (length(dim(x)) == 2) {
+                x[, trc_idx]
+            }
+        } else if (is.vector(x)) {
+            x[trc_idx]
+        }  else {
+            NULL
+        }
+    }
+    helper_mean <- function(x) {
+        if (is.array(x)) {
+            if (length(dim(x)) == 3) {
+                rowMeans(x, dims = 2)
+            } else if (length(dim(x)) == 2) {
+                rowMeans(x)
+            }
+        } else if (is.vector(x)) {
+            mean(x)
+        }  else {
+            NULL
+        }
+    }
+    model$samples <- rapply(model$samples, helper_rm, how = "list")
+    model$means <- rapply(model$samples, helper_mean, how = "list")
+    model
 }

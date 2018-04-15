@@ -373,6 +373,7 @@ SubjectQuad <- function(y, quad.mat, spline.mat, lme.obj, knots, limits,
 }
 
 
+
 ## Truncated power function
 ## data : 1st col x, 2nd col y, 3rd col groups
 ## K : number of quantile (inner) knots, or a vector of inner knots
@@ -408,7 +409,7 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
     n.subs <- length(idx.sub)
 
     ## construct the design matrix and knots
-    design.ls <- TpfDesign(x, K, deg)
+    design.ls <- get_design_tpf(x, K, deg)
     knots <- design.ls$knots            # all knots (with extrema)
     n.spline <- length(knots) - 2       # number of inner knots (w/o extrema)
     X.pop <- design.ls$design
@@ -429,7 +430,7 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
     idx.poly <- seq_len(deg + 1)        # index of polynomial terms
 
     ## Construct the constraint matrix and its cross-product
-    A <- TpfConstMat(knots, shape, deg)
+    A <- get_constman_tpf(knots, shape, deg)
     A.t <- t(A)
 
     ## Calculate an inverse of A to easily produce feasible states
@@ -438,7 +439,7 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
     A.inv <- solve(A.inv)
 
     ## initialise population coefs and subjects deviations
-    kcoef.pop <- seq(0, 1, len = n.terms)
+    kcoef.pop <- get_ols(y, X.pop)
     kcoef.sub <- matrix(0, n.terms, n.subs, dimnames = list(NULL, lvl.sub))
 
     ## initialise prediction contribution by population coefs
@@ -470,15 +471,15 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
     ## burnin followed by actual sampling
     for (k in seq.int(-burn + 1, size)) {
         ## get the precisions (varariance-covariance matrices)
-        kprecs <- TpfGetCov(list(kcoef.pop), list(kcoef.sub), list(kpred.pop),
-                            list(kpred.sub), list(y), idx.poly, Kmat, 1,
-                            n.subs, n.spline, n.samples)
+        kprecs <- get_cov_tpf(list(kcoef.pop), list(kcoef.sub), list(kpred.pop),
+                              list(kpred.sub), list(y), idx.poly, Kmat, 1,
+                              n.subs, n.spline, n.samples)
 
         ## get the coefs and deviations
-        kcoefs <- TpfGetCoefs(kcoef.sub, kpred.sub, X.pop, X.pop.sq, X.sub.sq,
-                              lvl.sub, idx.sub, y, kprecs$eps, kprecs$pop,
-                              kprecs$poly, kprecs$sub, A, A.t, A.inv, Kmat,
-                              n.terms)
+        kcoefs <- get_coefs_tpf(kcoef.sub, kpred.sub, X.pop, X.pop.sq, X.sub.sq,
+                                lvl.sub, idx.sub, y, kprecs$eps, kprecs$pop,
+                                kprecs$poly, kprecs$sub, A, A.t, A.inv, Kmat,
+                                n.terms)
 
         ## for the ease of reading
         kcoef.pop <- kcoefs$coef.pop
@@ -591,11 +592,11 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
     means <- list(population = rowMeans(samples$population),
                   subjects = rowMeans(samples$subjects, dims = 2))
     basis <- list(type = "tpf", knots = knots, degree = deg)
-    info <- list(lvl.pop = NA, lvl.sub = lvl.sub, n.terms = n.terms)
-    data <- data.frame(x = x, y = y, grp.sub = grp, grp.pop = NA)
-    res <- list(means = means, samples = samples, basis = basis, info = info,
-                data = data)
-    return(res)
+    info <- list(lvl_pop = NULL, lvl_sub = lvl.sub, n_terms = n.terms)
+    data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
+
+    list(means = means, samples = samples, basis = basis, info = info,
+         data = data)
 }
 
 
@@ -604,7 +605,7 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
 ## K: number of quantile (inner) knots, or a vector of inner knots
 ## deg: degree of spline polynomial
 SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
-                           burn = size / 10) {
+                           burn = size / 10, verbose = FALSE) {
     ## if (deg != 1 && deg != 2) {
     ##     stop("Invalid spline degree. Must be 1 or 2.")
     ## }
@@ -648,7 +649,7 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
     rm(i, grp.sub.i)
 
     ## construct design matrix and knots
-    design.ls <- TpfDesign(x, K, deg)
+    design.ls <- get_design_tpf(x, K, deg)
     knots <- design.ls$knots            # all knots (with extrema)
     n.spline <- length(knots) - 2       # number of inner knots (w/o extrema)
 
@@ -680,7 +681,7 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
     idx.poly <- seq_len(deg + 1)        # index of polynomial terms
 
     ## construct the constraint matrix and its cross-product
-    A <- TpfConstMat(knots, shape, deg)
+    A <- get_constmat_tpf(knots, shape, deg)
     A.t <- t(A)
 
     ## calculate an inverse of A to easily produce feasible states
@@ -694,9 +695,10 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
     kpred.pop <- list()
     kpred.sub <- list()
 
+
     for (i in lvl.pop) {
         ## initialise population coefs and subjects deviations
-        kcoef.pop[[i]] <- rep(0, n.terms)
+        kcoef.pop[[i]] <- get_ols(y.pop[[i]], X.pop[[i]])
         kcoef.sub[[i]] <- matrix(0, n.terms, n.subs[[i]],
                                  dimnames = list(NULL, lvl.sub[[i]]))
 
@@ -737,8 +739,9 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
     ## burnin followed by actual sampling
     for (k in seq.int(-burn + 1, size)) {
         ## get the precisions (varariance-covariance matrices)
-        kprecs <- TpfGetCov(kcoef.pop, kcoef.sub, kpred.pop, kpred.sub, y.pop,
-                            idx.poly, Kmat, n.pops, n.subs, n.spline, n.samples)
+        kprecs <- get_cov_tpf(kcoef.pop, kcoef.sub, kpred.pop, kpred.sub, y.pop,
+                              idx.poly, Kmat, n.pops, n.subs, n.spline,
+                              n.samples)
 
         if (k > 0) {
             ## store the precisions
@@ -749,7 +752,7 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
         }
 
         ## get the coefs and deviations
-        kcoefs <- parallel::mcmapply(TpfGetCoefs, kcoef.sub, kpred.sub, X.pop,
+        kcoefs <- parallel::mcmapply(get_coefs_tpf, kcoef.sub, kpred.sub, X.pop,
                                      X.pop.sq, X.sub.sq, lvl.sub, idx.sub,
                                      y.pop,
                                      MoreArgs = list(kprecs$eps, kprecs$pop,
@@ -770,6 +773,10 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
                 samples$subjects[[i]][, , k] <- kcoef.sub[[i]]
             }
         }
+
+        if (verbose && (k %% 1000 == 0)) {
+            cat(k, " samples generated.\n")
+        }
     }
 
     ## return posterior means (coefs only), samples, and information regarding
@@ -778,11 +785,12 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
                   subjects = lapply(samples$subjects,
                                     function(x) rowMeans(x, dims = 2)))
     basis <- list(type = "tpf", knots = knots, degree = deg)
-    info <- list(lvl.pop = lvl.pop, lvl.sub = lvl.sub, n.terms = n.terms)
-    data <- data.frame(x = x, y = y, grp.sub = grp.sub, grp.pop = grp.pop)
-    res <- list(means = means, samples = samples, basis = basis, info = info,
-                data = data)
-    return(res)
+    info <- list(lvl_pop = lvl.pop, lvl_sub = lvl.sub, n_terms = n.terms)
+    data <- data.frame(x = x, y = y, grp_sub = grp.sub, grp_pop = grp.pop)
+
+    list(means = means, samples = samples, basis = basis, info = info,
+         data = data)
+
 }
 
 
@@ -818,10 +826,10 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
 ## coef.sub: individual deviations (num mat)
 ## pred.pop: prediction contribution by the pop coefs (num vec)
 ## pred.sub: prediction contribution by the sub deviations (num vec)
-TpfGetCoefs <- function(coef.sub, pred.sub, X.pop, X.pop.sq, X.sub.sq, lvl.sub,
-                        idx.sub, y.pop,
-                        prc.eps, prc.pop, prc.poly, prc.sub, A,
-                        A.t, A.inv, Kmat, n.terms) {
+get_coefs_tpf <- function(coef.sub, pred.sub, X.pop, X.pop.sq, X.sub.sq,
+                          lvl.sub, idx.sub, y.pop,
+                          prc.eps, prc.pop, prc.poly, prc.sub, A,
+                          A.t, A.inv, Kmat, n.terms) {
 
     M.pop <- solve(X.pop.sq + (prc.pop / prc.eps) * Kmat)
     mu.pop <- tcrossprod(M.pop, X.pop) %*% (y.pop - pred.sub)
@@ -834,11 +842,14 @@ TpfGetCoefs <- function(coef.sub, pred.sub, X.pop, X.pop.sq, X.sub.sq, lvl.sub,
     ## Initialise the starting values of the truncated normal sampler
     start.pop <- A.inv %*% c(mu.pop[1], (lower.pop + 0.1))
 
+    coef.pop <- start.pop
     coef.pop <- TruncatedNormal::rmvtgauss.lin(1, mu.pop, sig.pop,
                                             Amat = A.t,
                                             Avec = lower.pop,
-                                            start = start.pop,
-                                            burnin = 1000)
+                                            ## start = start.pop,
+                                            ## burnin = 1000)
+                                            start = coef.pop,
+                                            burnin = 500)
 
     ## Update prediction contribution by the population curve.
     pred.pop <- X.pop %*% coef.pop
@@ -850,8 +861,9 @@ TpfGetCoefs <- function(coef.sub, pred.sub, X.pop, X.pop.sq, X.sub.sq, lvl.sub,
     ## initialise the starting values for the truncated normal sampler, and
     ## the coef.sub matrix
     zeros <- rep(0, n.terms)
-    coef.sub <- matrix(NA, n.terms, length(lvl.sub),
+    coef.sub <- matrix(0, n.terms, length(lvl.sub),
                        dimnames = list(NULL, lvl.sub))
+
 
     ## Calculate the precision matrix term
     half.N <- diag(prc.sub, n.terms)
@@ -864,18 +876,22 @@ TpfGetCoefs <- function(coef.sub, pred.sub, X.pop, X.pop.sq, X.sub.sq, lvl.sub,
         mu.sub <- tcrossprod(M.sub, X.pop[idx, ]) %*% y.diff.pop[idx]
         sig.sub <- M.sub / prc.eps
 
-        coef.sub[, j] <- TruncatedNormal::rmvtgauss.lin(1, mu.sub, sig.sub,
-                                                        Amat = A.t,
-                                                        Avec = lower.sub,
-                                                        start = zeros,
-                                                        burnin = 1000)
+        ## coef.sub[, j] <- TruncatedNormal::rmvtgauss.lin(1, mu.sub, sig.sub,
+        ##                                                 Amat = A.t,
+        ##                                                 Avec = lower.sub,
+        ##                                                 ## start = zeros,
+        ##                                                 ## burnin = 1000)
+        ##                                                 start = coef.sub[, j],
+        ##                                                 burnin = 500)
+
+        coef.sub[, j] <- mvtnorm::rmvnorm(1, mu.sub, sig.sub)
 
         ## Update prediction contribution by subject curves
         pred.sub[idx] <- X.pop[idx, ] %*% coef.sub[, j]
     }
 
-    return(list(coef.pop = coef.pop, coef.sub = coef.sub,
-                pred.pop = pred.pop, pred.sub = pred.sub))
+    list(coef.pop = coef.pop, coef.sub = coef.sub, pred.pop = pred.pop,
+         pred.sub = pred.sub)
 }
 
 ## get a sample from the covariance/precision posterior (assuming 1 population)
@@ -902,8 +918,8 @@ TpfGetCoefs <- function(coef.sub, pred.sub, X.pop, X.pop.sq, X.sub.sq, lvl.sub,
 ## prc.pop: precision of the population spline terms (num)
 ## prc.poly: precision of the individual polynomial term (num mat)
 ## prc.sub: precision of the individual spline terms (num)
-TpfGetCov <- function(coef.pop, coef.sub, pred.pop, pred.sub, y.pop,
-                      idx.poly, Kmat, n.pops, n.subs, n.spline, n.samples) {
+get_cov_tpf <- function(coef.pop, coef.sub, pred.pop, pred.sub, y.pop,
+                        idx.poly, Kmat, n.pops, n.subs, n.spline, n.samples) {
 
     ## hyperparameters of priors
     ig.a <- 0.001
@@ -923,12 +939,12 @@ TpfGetCov <- function(coef.pop, coef.sub, pred.pop, pred.sub, y.pop,
     ## precision of population spline terms
     shp.pop <- (n.pops * n.spline) / 2 + ig.a
     scl.pop <- 0.5 * xspl.pop + ig.b
-    prc.pop <- rgamma(1, shape = shp.pop, scale = scl.pop)
+    prc.pop <- rgamma(1, shape = shp.pop, rate = scl.pop)
 
     ## precision of individual spline terms
     shp.sub <- (sum(n.subs) * n.spline) / 2 + ig.a
     scl.sub <- 0.5 * xspl.sub + ig.b
-    prc.sub <- rgamma(1, shape = shp.sub, scale = scl.sub)
+    prc.sub <- rgamma(1, shape = shp.sub, rate = scl.sub)
 
     ## precision of residuals
     resid.vec <- mapply(function(x, y, z) x - y - z,
@@ -936,7 +952,7 @@ TpfGetCov <- function(coef.pop, coef.sub, pred.pop, pred.sub, y.pop,
                         SIMPLIFY = FALSE)
     shp.eps <- 0.5 * n.samples + ig.a
     scl.eps <- 0.5 * crossprod(unlist(resid.vec)) + ig.b
-    prc.eps <- rgamma(1, shape = shp.eps, scale = scl.eps)
+    prc.eps <- rgamma(1, shape = shp.eps, rate = scl.eps)
 
     ## tcrossprod of the polynomial terms, presented as a 3D array
     txpoly <- vapply(coef.sub, function(x) tcrossprod(x[idx.poly, ]),
@@ -947,5 +963,20 @@ TpfGetCov <- function(coef.pop, coef.sub, pred.pop, pred.sub, y.pop,
     Sigma.poly <- solve(wi.sig + rowSums(txpoly, dims = 2))
     prc.poly <- rWishart(1, df = df.poly, Sigma = Sigma.poly)[, , 1]
 
-    return(list(pop = prc.pop, sub = prc.sub, poly = prc.poly, eps = prc.eps))
+    list(pop = prc.pop, sub = prc.sub, poly = prc.poly, eps = prc.eps)
 }
+
+## Get an ordinary least squares estimate with a given response and design
+## matrix.
+get_ols <- function(response, design) {
+    tcrossprod(solve(crossprod(design)), design) %*% as.vector(response)
+}
+## fit_
+##     pop_pd <- nlme::pdIdent(~ Z.q - 1)
+##     ## sub.pd.q <- pdBlocked(list(pdSymm(~ time.q + I(time.q^2)), pdIdent(~ Z.q - 1)))
+##     ## sub.pd.q <- pdSymm(~ time.q + I(time.q^2))
+##     sub_pd <- pdBlocked(list(pdSymm(~ 1), pdIdent(~ Z.q - 1)))
+##     quad_fm <- lme(fixed = y ~ time.q + I(time.q^2),
+##                    random = list(pop.level = pop.pd.q, sub.level = sub.pd.q))
+
+

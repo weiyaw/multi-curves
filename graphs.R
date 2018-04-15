@@ -268,7 +268,7 @@ PlotSpline <- function(model, limits, data, fine = 200) {
 
     ## model matrix
     if (type == "tpf") {
-        model.mat <- TpfDesign(x, knots, deg)$design
+        model.mat <- get_design_tpf(x, knots, deg)$design
     } else if (type == "bs") {
         model.mat <- splines::splineDesign(knots, x, ord = deg + 1,
                                            outer.ok = TRUE)
@@ -306,5 +306,141 @@ PlotSpline <- function(model, limits, data, fine = 200) {
                                     col = "red", shape = 4)
 
     }
+}
+
+
+## plot multiple lines
+plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200) {
+
+    EPS <- 1e-6
+    knots <- model$basis$knots
+    names(knots) <- NULL
+    type <- model$basis$type
+    deg <- model$basis$degree
+
+    ## Rename the input data to prevent future accidental name change.
+    data <- model$data
+    colnames(data) <- c("x", "y", "sub", "pop")
+
+    is_multi_pop <- !is.null(model$info$lvl_pop)
+
+    ## Use the range of the predictor if 'limits' is missing
+    if (is.null(limits)) {
+        limits <- range(data$x)
+    } else if (!(is.vector(limits) && length(limits) == 2)) {
+        stop("'limits' must be a vector of length 2.")
+    }
+
+    ## Plot all population if 'plot_which' is missing
+    if (is.null(plot_which)) {
+        plot_which <- model$info$lvl_pop
+    } else if (!is.vector(lvl_pop)) {
+        stop("'plot_which' must be a vector.")
+    } else if (!all(plot_which %in% lvl_pop)) {
+        stop("Invalid population levels in 'plot_which'.")
+    }
+
+    ## 'x' axis of the plot
+    knots_within <- knots[knots > (min(limits) - EPS) &
+                          knots < (max(limits) + EPS)]
+    plot_x <- unique(c(seq(min(limits), max(limits), length.out = fine),
+                       knots_within))
+    plot_x <- plot_x[order(plot_x)]
+
+    ## Model matrix
+    if (type == "tpf") {
+        model_mat <- get_design_tpf(plot_x, knots, deg)$design
+    } else if (type == "bs") {
+        model_mat <- splines::splineDesign(knots, plot_x, ord = deg + 1,
+                                           outer.ok = TRUE)
+    } else {
+        stop("Unknown type of model.")
+    }
+
+    ## Extract the posterior means
+    coef_pop <- model$means$population
+    dev_sub <- model$means$subjects
+
+    ## Helper function to calculate the y axis of the plot
+    get_plot_y <- function(coef) {
+        model_mat %*% coef
+    }
+
+    ## y axis of the plot
+    if (is_multi_pop) {
+        coef_sub <- mapply(`+`, dev_sub[plot_which], coef_pop[plot_which],
+                           SIMPLIFY = FALSE)
+        plot_y_pop <- lapply(coef_pop[plot_which], get_plot_y)
+        plot_y_sub <- lapply(coef_sub[plot_which], get_plot_y)
+    } else {
+        coef_sub <- dev_sub + coef_pop
+        ## Align the data format of a single population model to a multiple
+        ## population model. Create a dummy name for the population
+        plot_which <- "dummy"
+        data$pop <- "dummy"
+        plot_y_pop <- list(dummy = get_plot_y(coef_pop))
+        plot_y_sub <- list(dummy = get_plot_y(coef_sub))
+    }
+
+    ## Reformat dataframe for ggplot
+    plotdat_pop <- list()
+    plotdat_sub <- list()
+    for (i in plot_which) {
+        plotdat_pop[[i]] <- data.frame(x = plot_x, y = plot_y_pop[[i]])
+        plotdat_sub[[i]] <- reshape2::melt(plot_y_sub[[i]],
+                                           varnames = c("x", "sub"),
+                                           as.is = TRUE, value.name = "y")
+        plotdat_sub[[i]]$x <- plot_x
+    }
+
+    ## melt the response into a data frame
+    ## plot_data_sub <- reshape2::melt(plot_y_sub, varnames = c("idx", "sub"),
+    ##                                 as.is = TRUE, value.name = "y")
+
+    ## plot_data_pop <- reshape2::melt(plot_y_pop, varnames = c("idx", "sub"),
+    ##                                 as.is = TRUE, value.name = "y")
+
+    ols_y <- get_ols(data$y[data$pop == plot_which[1]],
+                     get_design_tpf(data$x[data$pop == plot_which[1]], knots, deg)$design)
+    ols <- data.frame(x = plot_x,
+                      y = get_plot_y(ols_y))
+
+    aes <- ggplot2::aes
+    geom_point <- ggplot2::geom_point
+    geom_line <- ggplot2::geom_line
+
+    for (i in plot_which) {
+        ggobj <- ggplot2::ggplot(mapping = aes(x, y, col = sub)) +
+            geom_point(data = data[data$pop == i, ]) +
+            geom_line(aes(group = sub), data = plotdat_sub[[i]]) +
+            geom_line(aes(col = NULL), data = plotdat_pop[[i]]) +
+            geom_line(aes(col = NULL), data = ols, col = 'red')
+        print(ggobj)
+    }
+
+    ## This is a reassurance step (reorder group levels)
+    ## plot.data$grps <- factor(plot.data$grps, levels = colnames(coefs))
+
+    ## plot.data$x <- rep(x, times = NCOL(coefs))
+    ## pop.idx <- plot.data$grps %in% "population"
+
+
+    ## colnames(data) <- c("x", "y", "grps")
+    ## base <- ggplot2::ggplot()
+    ## gg_pop <- ggplot2::geom_line(ggplot2::aes(plot_x, plot_y, group = grps, col = grps),
+    ##                           plot.data[!pop.idx, ])
+
+    ##         ggplot2::geom_point(ggplot2::aes(x, y, col = grps), data) +
+    ##         ggplot2::geom_line(ggplot2::aes(x, value), plot.data[pop.idx, ],
+    ##                            col = "black") +
+    ##         ggplot2::geom_point(ggplot2::aes(x = knots.within,
+    ##                                          y = rep(0, length(knots.within))),
+    ##                             col = "red", shape = 4)
+}
+
+
+plot_a_spline <- function(coef, limits) {
+
+
 }
 

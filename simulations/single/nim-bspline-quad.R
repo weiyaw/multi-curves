@@ -1,5 +1,5 @@
 source("main-bspline.R")
-sitka <- read.table("data/tsitka.txt", header = T)
+sitka <- read.table("data/sitka5.txt", header = T)
 sitka <- data.frame(x = sitka$days / 674,
                     y = sitka$log.size,
                     grps = factor(sitka$id.num))
