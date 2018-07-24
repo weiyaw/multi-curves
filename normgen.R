@@ -151,6 +151,7 @@ new.rtmg <- function (n, M, r, initial, f = NULL, g = NULL, q = NULL, burn.in = 
         stop("Error: wrong length for initial value vector.")
     }
 
+    ## what's this? to make sure M is symmetric?
     M = (M + t(M))/2
     eigs = eigen(M, symmetric = T, only.values = T)$values
 
@@ -228,4 +229,11 @@ new.rtmg <- function (n, M, r, initial, f = NULL, g = NULL, q = NULL, burn.in = 
     samples = tcrossprod(samples, Ri) + matrix(rep(Mir, n), nrow = n,
         byrow = T)
     return(samples)
+}
+
+
+my_rtmg <- function(n, mean, sd, initial, f = NULL, g = NULL, burn.in = 30) {
+
+
+
 }

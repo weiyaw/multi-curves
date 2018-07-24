@@ -389,7 +389,8 @@ get_constmat_tpf <- function(knots, shape, deg) {
     }
 }
 
-truncate <- function(model, size) {
+## delete the samples with indices 1:size
+truncate_spline <- function(model, size) {
     trc_idx <- -1 * seq_len(size)
     helper_rm <- function(x) {
         if (is.array(x)) {

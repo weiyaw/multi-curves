@@ -413,8 +413,8 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200) {
         ggobj <- ggplot2::ggplot(mapping = aes(x, y, col = sub)) +
             geom_point(data = data[data$pop == i, ]) +
             geom_line(aes(group = sub), data = plotdat_sub[[i]]) +
-            geom_line(aes(col = NULL), data = plotdat_pop[[i]]) +
-            geom_line(aes(col = NULL), data = ols, col = 'red')
+            geom_line(aes(col = NULL), data = plotdat_pop[[i]]) ## +
+            ## geom_line(aes(col = NULL), data = ols, col = 'red')
         print(ggobj)
     }
 
