@@ -25,64 +25,64 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
         grp <- factor(data[[3]], levels = unique(data[[3]]))
     }
 
-    n.terms <- K + deg + 1
-    n.samples <- NROW(data)
+    n_terms <- K + deg + 1
+    n_samples <- NROW(data)
 
-    lvl.sub <- levels(grp)
-    idx.sub <- tapply(seq_len(n.samples), grp, function(x) x)
-    n.subs <- length(idx.sub)
+    lvl_sub <- levels(grp)
+    idx_sub <- tapply(seq_len(n_samples), grp, function(x) x)
+    n_subs <- length(idx_sub)
 
     ## construct the design matrix and knots
-    design.ls <- get_design_tpf(x, K, deg)
-    knots <- design.ls$knots            # all knots (with extrema)
-    n.spline <- length(knots) - 2       # number of inner knots (w/o extrema)
-    X.pop <- design.ls$design
+    design_ls <- get_design_tpf(x, K, deg)
+    knots <- design_ls$knots            # all knots (with extrema)
+    n_spline <- length(knots) - 2       # number of inner knots (w/o extrema)
+    X_pop <- design_ls$design
 
-    ## get rid of the design.ls to save space
-    rm(design.ls)
+    ## get rid of the design_ls to save space
+    rm(design_ls)
 
     ## construct cross-products of the design matrix
-    X.pop.sq <- crossprod(X.pop)
-    X.sub.sq <- array(NA, c(n.terms, n.terms, n.subs),
-                      list(NULL, NULL, lvl.sub))
-    for (j in lvl.sub) {
-        X.sub.sq[, , j] <- crossprod(X.pop[idx.sub[[j]], ])
+    X_pop_sq <- crossprod(X_pop)
+    X_sub_sq <- array(NA, c(n_terms, n_terms, n_subs),
+                      list(NULL, NULL, lvl_sub))
+    for (j in lvl_sub) {
+        X_sub_sq[, , j] <- crossprod(X_pop[idx_sub[[j]], ])
     }
 
     ## An idempotent matrix to extract the spline terms
-    Kmat <- diag(c(rep(0, deg + 1), rep(1, n.spline)))
-    idx.poly <- seq_len(deg + 1)        # index of polynomial terms
+    Kmat <- diag(c(rep(0, deg + 1), rep(1, n_spline)))
+    idx_poly <- seq_len(deg + 1)        # index of polynomial terms
 
     ## Construct the constraint matrix and its cross-product
     A <- get_constmat_tpf(knots, shape, deg)
-    A.t <- t(A)
+    A_t <- t(A)
 
     ## Calculate an inverse of A to easily produce feasible states
-    A.inv <- diag(NCOL(A))
-    A.inv[row(A.inv) > diff(dim(A))] <- A
-    A.inv <- solve(A.inv)
+    A_inv <- diag(NCOL(A))
+    A_inv[row(A_inv) > diff(dim(A))] <- A
+    A_inv <- solve(A_inv)
 
     ## initialise population coefs and subjects deviations
-    kcoef.pop <- get_ols(y, X.pop)
-    kcoef.sub <- matrix(0, n.terms, n.subs, dimnames = list(NULL, lvl.sub))
+    kcoef_pop <- get_ols(y, X_pop)
+    kcoef_sub <- matrix(0, n_terms, n_subs, dimnames = list(NULL, lvl_sub))
 
     ## initialise prediction contribution by population coefs
-    kpred.pop <- X.pop %*% kcoef.pop
+    kpred_pop <- X_pop %*% kcoef_pop
 
     ## initialise prediction contribution by subjects deviations
-    kpred.sub <- rep(NA, n.samples)
-    for (j in lvl.sub) {
-        idx <- idx.sub[[j]]
-        kpred.sub[idx] <- X.pop[idx, ] %*% kcoef.sub[, j]
+    kpred_sub <- rep(NA, n_samples)
+    for (j in lvl_sub) {
+        idx <- idx_sub[[j]]
+        kpred_sub[idx] <- X_pop[idx, ] %*% kcoef_sub[, j]
     }
 
     ## remove the dummy variables used in the for loop
     rm(j, idx)
 
-    ## initialise the output list, by the order of lvl.sub
-    samples <- list(population = matrix(NA, n.terms, size),
-                    subjects = array(NA, c(n.terms, n.subs, size),
-                                     dimnames = list(NULL, lvl.sub)),
+    ## initialise the output list, by the order of lvl_sub
+    samples <- list(population = matrix(NA, n_terms, size),
+                    subjects = array(NA, c(n_terms, n_subs, size),
+                                     dimnames = list(NULL, lvl_sub)),
                     precision = list())
     ## samples$precision: precisions (matrix) (num vec/mat list)
     ## pop: population coefs; poly: subject polynomial terms;
@@ -95,21 +95,21 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
     ## burnin followed by actual sampling
     for (k in seq.int(-burn + 1, size)) {
         ## get the precisions (varariance-covariance matrices)
-        kprecs <- get_cov_tpf(list(kcoef.pop), list(kcoef.sub), list(kpred.pop),
-                              list(kpred.sub), list(y), idx.poly, Kmat, 1,
-                              n.subs, n.spline, n.samples)
+        kprecs <- get_cov_tpf(list(kcoef_pop), list(kcoef_sub), list(kpred_pop),
+                              list(kpred_sub), list(y), idx_poly, Kmat, 1,
+                              n_subs, n_spline, n_samples)
 
         ## get the coefs and deviations
-        kcoefs <- get_coefs_tpf(kcoef.sub, kpred.sub, X.pop, X.pop.sq, X.sub.sq,
-                                lvl.sub, idx.sub, y, kprecs$eps, kprecs$pop,
-                                kprecs$poly, kprecs$sub, A, A.t, A.inv, Kmat,
-                                n.terms)
+        kcoefs <- get_coefs_tpf(kcoef_sub, kpred_sub, X_pop, X_pop_sq, X_sub_sq,
+                                lvl_sub, idx_sub, y, kprecs$eps, kprecs$pop,
+                                kprecs$poly, kprecs$sub, A, A_t, A_inv, Kmat,
+                                n_terms)
 
         ## for the ease of reading
-        kcoef.pop <- kcoefs$coef.pop
-        kcoef.sub <- kcoefs$coef.sub
-        kpred.pop <- kcoefs$pred.pop
-        kpred.sub <- kcoefs$pred.sub
+        kcoef_pop <- kcoefs$coef_pop
+        kcoef_sub <- kcoefs$coef_sub
+        kpred_pop <- kcoefs$pred_pop
+        kpred_sub <- kcoefs$pred_sub
 
         if (k > 0) {
             ## store the precisions
@@ -119,8 +119,8 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
             samples$precision$eps[k] <- kprecs$eps
 
             ## store the coefs and deviations
-            samples$population[, k] <- kcoef.pop
-            samples$subjects[, , k] <- kcoef.sub
+            samples$population[, k] <- kcoef_pop
+            samples$subjects[, , k] <- kcoef_sub
         }
 
         if (verbose && (k %% 1000 == 0)) {
@@ -128,98 +128,12 @@ SubjectsTpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
         }
     }
 
-    ## ## hyperparameters of priors
-    ## ig.a <- 0.001
-    ## ig.b <- 0.001
-    ## wi.df <- 1
-    ## wi.sig <- diag(0.001, deg + 1)
-
-    ## ## Burnin step
-    ## for (k in seq_len(burn + size)) {
-    ##     ## Update variances
-    ##     c.vpop <- 1 / rgamma(1, shape = n.spline / 2 + ig.a,
-    ##                          scale = 0.5 * crossprod(Kmat %*% c.pop) + ig.b)
-    ##     c.vsub <- 1 / rgamma(1, shape = (n.subs * n.spline) / 2 + ig.a,
-    ##                          scale = 0.5 * crossprod(c(Kmat %*% c.sub)) + ig.b)
-    ##     c.ppoly <- rWishart(1, df = wi.df + n.subs,
-    ##                         solve(wi.sig + tcrossprod(c.sub[idx.poly, ])))
-    ##     resid.vec <- y - pred.pop - pred.sub
-    ##     c.veps <- 1 / rgamma(1, shape = 0.5 * n.samples + ig.a,
-    ##                          scale = 0.5 * crossprod(resid.vec) + ig.b)
-
-
-    ##     ## Update population estimates
-    ##     M.pop <- solve(X.pop.sq + (c.veps / c.vpop) * Kmat)
-    ##     mu.pop <- tcrossprod(M.pop, X.pop) %*% (y - pred.sub)
-    ##     sig.pop <- c.veps * M.pop
-
-    ##     lower.pop <- A %*% c.sub
-    ##     lower.pop <- -1 * apply(lower.pop, 1, min)
-    ##     lower.pop[lower.pop < 0] <- 0
-
-    ##     ## Initialise the starting values of the truncated normal sampler
-    ##     start.pop <- A.inv %*% c(mu.pop[1], (lower.pop + 0.1))
-
-    ##     c.pop <- TruncatedNormal::rmvtgauss.lin(1, mu.pop, sig.pop,
-    ##                                             Amat = A.t,
-    ##                                             Avec = lower.pop,
-    ##                                             start = start.pop,
-    ##                                             burnin = 1000)
-    ##     if (k > burn) {
-    ##         rec.idx <- k - burn
-    ##         if (rec.idx %% 1000 == 0) {
-    ##             cat(rec.idx, "samples generated. \n")
-    ##         }
-    ##         samples$population[, rec.idx] <- c.pop
-    ##         samples$var.pop[rec.idx] <- c.vpop
-    ##         samples$prec.poly[, , rec.idx] <- c.ppoly
-    ##         samples$var.sub[rec.idx] <- c.vsub
-    ##         samples$var.eps[rec.idx] <- c.veps
-    ##     }
-
-    ##     ## Update prediction contribution by the population curve.
-    ##     pred.pop <- X.pop %*% c.pop
-    ##     y.diff.pop <- y - pred.pop
-
-    ##     ## Update subject specific estimates
-    ##     lower.sub <- -1 * (A %*% c.pop)
-
-    ##     ## Initialise the starting values of the truncated normal sampler
-    ##     ## start.sub <- rep(0, n.terms)
-    ##     zeros <- rep(0, n.terms)
-
-    ##     ## Calculate the precision matrix term
-    ##     G.term <- diag(1 / c.vsub, n.terms)
-    ##     G.term[1:NROW(c.ppoly), 1:NCOL(c.ppoly)] <- c.ppoly
-    ##     G.term <- c.veps * G.term
-
-    ##     for (i in seq_len(n.subs)) {
-    ##         idx <- idx.sub[[i]]
-    ##         M.sub <- solve(X.sub.sq[[i]] + G.term)
-    ##         mu.sub <- tcrossprod(M.sub, X.pop[idx, ]) %*% y.diff.pop[idx]
-    ##         sig.sub <- c.veps * M.sub
-
-    ##         c.sub[, i] <- TruncatedNormal::rmvtgauss.lin(1, mu.sub, sig.sub,
-    ##                                                      Amat = A.t,
-    ##                                                      Avec = lower.sub,
-    ##                                                      start = zeros,
-    ##                                                      burnin = 1000)
-
-    ##         ## Update prediction contribution by subject curves
-    ##         pred.sub[idx] <- X.pop[idx, ] %*% c.sub[, i]
-
-    ##         if (k > burn) {
-    ##             samples[[i]][, k - burn] <- c.sub[, i]
-    ##         }
-    ##     }
-    ## }
-
     ## return posterior means (coefs only), samples, and information regarding
     ## the basis functions.
     means <- list(population = rowMeans(samples$population),
                   subjects = rowMeans(samples$subjects, dims = 2))
     basis <- list(type = "tpf", knots = knots, degree = deg)
-    info <- list(lvl_pop = NULL, lvl_sub = lvl.sub, n_terms = n.terms)
+    info <- list(lvl_pop = NULL, lvl_sub = lvl_sub, n_terms = n_terms)
     data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
 
     list(means = means, samples = samples, basis = basis, info = info,
@@ -238,123 +152,123 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
     ## }
     DEBUG <- FALSE
 
-    n.terms <- K + deg + 1              # number of coefs to describe a curve
-    n.samples <- NROW(data)             # number of provided datapoints
+    n_terms <- K + deg + 1              # number of coefs to describe a curve
+    n_samples <- NROW(data)             # number of provided datapoints
 
     x <- data[[1]]
     y <- data[[2]]
 
     ## convert groups variables to factors
     if (is.factor(data[[3]])) {
-        grp.sub <- droplevels(data[[3]])
+        grp_sub <- droplevels(data[[3]])
     } else {
-        grp.sub <- factor(data[[3]], levels = unique(data[[3]]))
+        grp_sub <- factor(data[[3]], levels = unique(data[[3]]))
     }
     if (is.factor(data[[4]])) {
-        grp.pop <- droplevels(data[[4]])
+        grp_pop <- droplevels(data[[4]])
     } else {
-        grp.pop <- factor(data[[4]], levels = unique(data[[4]]))
+        grp_pop <- factor(data[[4]], levels = unique(data[[4]]))
     }
 
     ## calculate the population indices
     ## these are used to extract from the input (main) dataframe
-    lvl.pop <- levels(grp.pop)
-    idx.pop <- tapply(seq_len(n.samples), grp.pop, function(x) x)
-    n.pops <- length(idx.pop)
+    lvl_pop <- levels(grp_pop)
+    idx_pop <- tapply(seq_len(n_samples), grp_pop, function(x) x)
+    n_pops <- length(idx_pop)
 
     ## calculate the subject indices within each population
     ## these are used to extract from each population dataframe (P_i)
-    lvl.sub <- list()
-    idx.sub <- list()
-    for (i in lvl.pop) {
-        grp.sub.i <- grp.sub[grp.pop == i, drop = TRUE]
-        lvl.sub[[i]] <- levels(grp.sub.i)
-        idx.sub[[i]] <- tapply(seq_along(grp.sub.i), grp.sub.i , function(x) x)
+    lvl_sub <- list()
+    idx_sub <- list()
+    for (i in lvl_pop) {
+        grp_sub_i <- grp_sub[grp_pop == i, drop = TRUE]
+        lvl_sub[[i]] <- levels(grp_sub_i)
+        idx_sub[[i]] <- tapply(seq_along(grp_sub_i), grp_sub_i , function(x) x)
     }
-    n.subs <- vapply(idx.sub, length, 0L) # number of subjects in each pop
+    n_subs <- vapply(idx_sub, length, 0L) # number of subjects in each pop
 
     ## remove the dummy variables used in the for loop
-    rm(i, grp.sub.i)
+    rm(i, grp_sub_i)
 
     ## construct design matrix and knots
-    design.ls <- get_design_tpf(x, K, deg)
-    knots <- design.ls$knots            # all knots (with extrema)
-    n.spline <- length(knots) - 2       # number of inner knots (w/o extrema)
+    design_ls <- get_design_tpf(x, K, deg)
+    knots <- design_ls$knots            # all knots (with extrema)
+    n_spline <- length(knots) - 2       # number of inner knots (w/o extrema)
 
     ## construct cross-products of the design matrix
     ## also, seperate the design matrix for each population (P_i)
-    ## X.pop.sq = crossprod(P_i), X.sub.sq = crossprod(X_ij)
-    ## X.pop.sq is a 3D array, X.sub.sq is a list of 3D arrays.
-    X.pop <- list()
-    X.pop.sq <- list()
-    X.sub.sq <- list()
-    for (i in lvl.pop) {
-        X.pop[[i]] <- design.ls$design[idx.pop[[i]], ]
-        X.pop.sq[[i]] <- crossprod(X.pop[[i]])
-        X.sub.sq[[i]] <- array(NA, c(n.terms, n.terms, n.subs[[i]]),
-                               list(NULL, NULL, lvl.sub[[i]]))
-        for (j in lvl.sub[[i]]) {
-            X.sub.sq[[i]][, , j] <- crossprod(X.pop[[i]][idx.sub[[i]][[j]], ])
+    ## X_pop_sq = crossprod(P_i), X_sub_sq = crossprod(X_ij)
+    ## X_pop_sq is a 3D array, X_sub_sq is a list of 3D arrays.
+    X_pop <- list()
+    X_pop_sq <- list()
+    X_sub_sq <- list()
+    for (i in lvl_pop) {
+        X_pop[[i]] <- design_ls$design[idx_pop[[i]], ]
+        X_pop_sq[[i]] <- crossprod(X_pop[[i]])
+        X_sub_sq[[i]] <- array(NA, c(n_terms, n_terms, n_subs[[i]]),
+                               list(NULL, NULL, lvl_sub[[i]]))
+        for (j in lvl_sub[[i]]) {
+            X_sub_sq[[i]][, , j] <- crossprod(X_pop[[i]][idx_sub[[i]][[j]], ])
         }
     }
 
-    ## get rid of the design.ls to save space
-    rm(design.ls)
+    ## get rid of the design_ls to save space
+    rm(design_ls)
 
     ## get y for each population (y_i)
-    y.pop <- tapply(y, grp.pop, function(x) x)
+    y_pop <- tapply(y, grp_pop, function(x) x)
 
     ## an idempotent matrix to extract the spline terms
-    Kmat <- diag(c(rep(0, deg + 1), rep(1, n.spline)))
-    idx.poly <- seq_len(deg + 1)        # index of polynomial terms
+    Kmat <- diag(c(rep(0, deg + 1), rep(1, n_spline)))
+    idx_poly <- seq_len(deg + 1)        # index of polynomial terms
 
     ## construct the constraint matrix and its cross-product
     A <- get_constmat_tpf(knots, shape, deg)
-    A.t <- t(A)
+    A_t <- t(A)
 
     ## calculate an inverse of A to easily produce feasible states
-    A.inv <- diag(NCOL(A))
-    A.inv[row(A.inv) > diff(dim(A))] <- A
-    A.inv <- solve(A.inv)
+    A_inv <- diag(NCOL(A))
+    A_inv[row(A_inv) > diff(dim(A))] <- A
+    A_inv <- solve(A_inv)
 
     ## initialise the current estimates
-    kcoef.pop <- list()
-    kcoef.sub <- list()
-    kpred.pop <- list()
-    kpred.sub <- list()
+    kcoef_pop <- list()
+    kcoef_sub <- list()
+    kpred_pop <- list()
+    kpred_sub <- list()
 
 
-    for (i in lvl.pop) {
+    for (i in lvl_pop) {
         ## initialise population coefs and subjects deviations
         ## OLS as starting values
-        ## kcoef.pop[[i]] <- get_ols(y.pop[[i]], X.pop[[i]])
+        ## kcoef_pop[[i]] <- get_ols(y_pop[[i]], X_pop[[i]])
         ## Zero vector as starting values
-        kcoef.pop[[i]] <- rep(0, n.terms)
-        kcoef.sub[[i]] <- matrix(0, n.terms, n.subs[[i]],
-                                 dimnames = list(NULL, lvl.sub[[i]]))
+        kcoef_pop[[i]] <- rep(0, n_terms)
+        kcoef_sub[[i]] <- matrix(0, n_terms, n_subs[[i]],
+                                 dimnames = list(NULL, lvl_sub[[i]]))
 
         ## initialise prediction contribution by population coefs
-        kpred.pop[[i]] <- X.pop[[i]] %*% kcoef.pop[[i]]
+        kpred_pop[[i]] <- X_pop[[i]] %*% kcoef_pop[[i]]
 
         ## initialise prediction contribution by subjects deviations
-        kpred.sub[[i]] <- rep(NA, length(idx.pop[[i]]))
-        for (j in lvl.sub[[i]]) {
-            idx <- idx.sub[[i]][[j]]
-            kpred.sub[[i]][idx] <- X.pop[[i]][idx, ] %*% kcoef.sub[[i]][, j]
+        kpred_sub[[i]] <- rep(NA, length(idx_pop[[i]]))
+        for (j in lvl_sub[[i]]) {
+            idx <- idx_sub[[i]][[j]]
+            kpred_sub[[i]][idx] <- X_pop[[i]][idx, ] %*% kcoef_sub[[i]][, j]
         }
     }
 
     ## remove the dummy variables used in the for loop
     rm(i, j, idx)
 
-    ## initialise the output list, by the order of lvl.pop and lvl.sub
+    ## initialise the output list, by the order of lvl_pop and lvl_sub
     samples <- list(population = list(), subjects = list(), precision = list())
-    for (i in lvl.pop) {
+    for (i in lvl_pop) {
         ## samples$population: population coefs (num mat list)
         ## samples$subjects: subject deviations (num 3D ary list)
-        samples$population[[i]] <- matrix(NA, n.terms, size)
-        samples$subjects[[i]] <- array(NA, c(n.terms, n.subs[[i]], size),
-                                       dimnames = list(NULL, lvl.sub[[i]]))
+        samples$population[[i]] <- matrix(NA, n_terms, size)
+        samples$subjects[[i]] <- array(NA, c(n_terms, n_subs[[i]], size),
+                                       dimnames = list(NULL, lvl_sub[[i]]))
     }
     ## samples$precision: precisions (matrix) (num vec/mat list)
     ## pop: population coefs; poly: subject polynomial terms;
@@ -370,9 +284,9 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
     ## burnin followed by actual sampling
     for (k in seq.int(-burn + 1, size)) {
         ## get the precisions (varariance-covariance matrices)
-        kprecs <- get_cov_tpf(kcoef.pop, kcoef.sub, kpred.pop, kpred.sub, y.pop,
-                              idx.poly, Kmat, n.pops, n.subs, n.spline,
-                              n.samples)
+        kprecs <- get_cov_tpf(kcoef_pop, kcoef_sub, kpred_pop, kpred_sub, y_pop,
+                              idx_poly, Kmat, n_pops, n_subs, n_spline,
+                              n_samples)
 
         if (k > 0) {
             ## store the precisions
@@ -386,25 +300,25 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
         ## DEBUG
         ## if (k == 67) {DEBUG <- TRUE}
         ## if (k == 68) {DEBUG <- FALSE}
-        kcoefs <- mapply(get_coefs_tpf, kcoef.sub, kpred.sub, X.pop,
-                         X.pop.sq, X.sub.sq, lvl.sub, idx.sub,
-                         y.pop,
+        kcoefs <- mapply(get_coefs_tpf, kcoef_sub, kpred_sub, X_pop,
+                         X_pop_sq, X_sub_sq, lvl_sub, idx_sub,
+                         y_pop,
                          MoreArgs = list(kprecs$eps, kprecs$pop,
                                          kprecs$poly, kprecs$sub, A,
-                                         A.t, A.inv, Kmat, n.terms, DEBUG),
+                                         A_t, A_inv, Kmat, n_terms, DEBUG),
                          SIMPLIFY = FALSE)
 
-        for (i in lvl.pop) {
+        for (i in lvl_pop) {
             ## convert mapply output into a suitable format
-            kcoef.pop[[i]] <- kcoefs[[i]]$coef.pop
-            kcoef.sub[[i]] <- kcoefs[[i]]$coef.sub
-            kpred.pop[[i]] <- kcoefs[[i]]$pred.pop
-            kpred.sub[[i]] <- kcoefs[[i]]$pred.sub
+            kcoef_pop[[i]] <- kcoefs[[i]]$coef_pop
+            kcoef_sub[[i]] <- kcoefs[[i]]$coef_sub
+            kpred_pop[[i]] <- kcoefs[[i]]$pred_pop
+            kpred_sub[[i]] <- kcoefs[[i]]$pred_sub
 
             if (k > 0) {
                 ## store the coefs and deviations
-                samples$population[[i]][, k] <- kcoef.pop[[i]]
-                samples$subjects[[i]][, , k] <- kcoef.sub[[i]]
+                samples$population[[i]][, k] <- kcoef_pop[[i]]
+                samples$subjects[[i]][, , k] <- kcoef_sub[[i]]
             }
         }
 
@@ -419,8 +333,8 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
                   subjects = lapply(samples$subjects,
                                     function(x) rowMeans(x, dims = 2)))
     basis <- list(type = "tpf", knots = knots, degree = deg)
-    info <- list(lvl_pop = lvl.pop, lvl_sub = lvl.sub, n_terms = n.terms)
-    data <- data.frame(x = x, y = y, grp_sub = grp.sub, grp_pop = grp.pop)
+    info <- list(lvl_pop = lvl_pop, lvl_sub = lvl_sub, n_terms = n_terms)
+    data <- data.frame(x = x, y = y, grp_sub = grp_sub, grp_pop = grp_pop)
 
     list(means = means, samples = samples, basis = basis, info = info,
          data = data)
@@ -428,236 +342,275 @@ SubjectsTpfMul <- function(data, K, deg = 1, shape = "increasing", size = 100,
 }
 
 
-## get a sample from the coefs posterior (assuming 1 population)
+## get a sample from the coefs posterior (one population)
 
 ## different in each ITERATION and POPULATION
-## coef.sub: individual deviations (num mat)
-## pred.sub: prediction contribution by the sub deviations (num vec)
+## coef_sub: individual deviations (num mat)
+## pred_sub: prediction contribution by the sub deviations (num vec)
 
 ## different in each POPULATION
-## X.pop: design matrix (num mat)
-## X.pop.sq: crossprod of the whole design matrix (num mat)
-## X.sub.sq: crossprod of the individual design matrix (num 3d ary)
-## lvl.sub: names of each subject (str vec)
-## idx.sub: indices of each subject in X.pop (num vec list)
-## y.pop: response data (num vec list)
+## X_pop: design matrix (num mat)
+## X_pop_sq: crossprod of the whole design matrix (num mat)
+## X_sub_sq: crossprod of the individual design matrix (num 3d ary)
+## lvl_sub: names of each subject (str vec)
+## idx_sub: indices of each subject in X_pop (num vec list)
+## y_pop: response data (num vec list)
 
 ## different in each ITERATAION
-## prc.eps: precision of the Gaussian noise (num)
-## prc.pop: precision of the population spline terms (num)
-## prc.poly: precision of the individual polynomial term (num mat)
-## prc.sub: precision of the individual spline terms (num)
+## prc_eps: precision of the Gaussian noise (num)
+## prc_pop: precision of the population spline terms (num)
+## prc_poly: precision of the individual polynomial term (num mat)
+## prc_sub: precision of the individual spline terms (num)
 
 ## constants
 ## A: constraint matrix (num mat)
-## A.t: t(A), for the purpose of using Berwin's sampler (num mat)
-## A.inv: pseudo-inverse of A for generating feasible starting values (num mat)
+## A_t: t(A), for the purpose of using Berwin's sampler (num mat)
+## A_inv: pseudo-inverse of A for generating feasible starting values (num mat)
 ## Kmat: to extract spline terms (num mat)
-## n.terms: number of parameters to descrive a curve (num)
+## n_terms: number of parameters to descrive a curve (num)
 
 ## RETURN
-## coef.pop: population coefs (num vec)
-## coef.sub: individual deviations (num mat)
-## pred.pop: prediction contribution by the pop coefs (num vec)
-## pred.sub: prediction contribution by the sub deviations (num vec)
-get_coefs_tpf <- function(coef.sub, pred.sub, X.pop, X.pop.sq, X.sub.sq,
-                          lvl.sub, idx.sub, y.pop,
-                          prc.eps, prc.pop, prc.poly, prc.sub, A,
-                          A.t, A.inv, Kmat, n.terms, DEBUG = FALSE) {
+## coef_pop: population coefs (num vec)
+## coef_sub: individual deviations (num mat)
+## pred_pop: prediction contribution by the pop coefs (num vec)
+## pred_sub: prediction contribution by the sub deviations (num vec)
+get_coefs_tpf <- function(coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_sq,
+                          lvl_sub, idx_sub, y_pop,
+                          prc_eps, prc_pop, prc_poly, prc_sub, A,
+                          A_t, A_inv, Kmat, n_terms, DEBUG = FALSE) {
 
-    M.pop <- solve(X.pop.sq + (prc.pop / prc.eps) * Kmat)
-    mu.pop <- tcrossprod(M.pop, X.pop) %*% (y.pop - pred.sub)
-    sig.pop <- M.pop / prc.eps
+    M_pop <- solve(X_pop_sq + (prc_pop / prc_eps) * Kmat)
+    mu_pop <- tcrossprod(M_pop, X_pop) %*% (y_pop - pred_sub)
+    sig_pop <- M_pop / prc_eps
 
-    lower.pop <- A %*% coef.sub
-    lower.pop <- -1 * apply(lower.pop, 1, min)
-    lower.pop[lower.pop < 0] <- 0
+    lower_pop <- A %*% coef_sub
+    lower_pop <- -1 * apply(lower_pop, 1, min)
+    lower_pop[lower_pop < 0] <- 0
 
     ## Initialise the starting values of the truncated normal sampler
-    start.pop <- A.inv %*% c(mu.pop[1], (lower.pop + 0.1))
+    start_pop <- A_inv %*% c(mu_pop[1], (lower_pop + 0.1))
 
-    coef.pop <- start.pop
+    coef_pop <- start_pop
     if (DEBUG) {browser()}
 
     ## TRUNCATED NORMAL WITH BERWIN'S SAMPLER
-    ## coef.pop <- TruncatedNormal::rmvtgauss.lin(1, mu.pop, sig.pop,
-    ##                                         Amat = A.t,
-    ##                                         Avec = lower.pop,
-    ##                                         ## start = start.pop,
+    ## coef_pop <- TruncatedNormal::rmvtgauss.lin(1, mu_pop, sig_pop,
+    ##                                         Amat = A_t,
+    ##                                         Avec = lower_pop,
+    ##                                         ## start = start_pop,
     ##                                         ## burnin = 1000)
-    ##                                         start = coef.pop,
+    ##                                         start = coef_pop,
     ##                                         burnin = 500)
 
     ## ORDINARY NORMAL WITH BUILT IN SAMPLER
-    ## coef.pop <- t(mvtnorm::rmvnorm(1, mu.pop, sig.pop))
+    coef_pop <- t(mvtnorm::rmvnorm(1, mu_pop, sig_pop))
 
     ## TRUNCATED NORMAL WITH MODIFIED HMC
-    ## if (DEBUG) {
-    ##     arg2 <- list(mean = mu.pop, cov = sig.pop,
-    ##                  F = A, g = -lower.pop,
-    ##                  initial = coef.pop)
-    ##     saveRDS(arg2, "~/Dropbox/master/algo/tmg/arg2.rds")
-    ## }
-    coef.pop <- t(tnorm::rmvtnorm(1, mu.pop, sig.pop,
-                                F = A,
-                                g = -lower.pop,
-                                ## start = start.pop,
-                                ## burnin = 1000)
-                                initial = coef.pop,
-                                burn = 20))
+    ## coef_pop <- t(tnorm::rmvtnorm(1, mu_pop, sig_pop,
+    ##                             F = A,
+    ##                             g = -lower_pop,
+    ##                             ## start = start_pop,
+    ##                             ## burnin = 1000)
+    ##                             initial = coef_pop,
+    ##                             burn = 20))
 
-    ## tmp <- TruncatedNormal::rmvtgauss.lin(500, mu.pop, sig.pop,
-    ##                                         Amat = A.t,
-    ##                                         Avec = lower.pop,
-    ##                                         ## start = start.pop,
+    ## tmp <- TruncatedNormal::rmvtgauss.lin(500, mu_pop, sig_pop,
+    ##                                         Amat = A_t,
+    ##                                         Avec = lower_pop,
+    ##                                         ## start = start_pop,
     ##                                         ## burnin = 1000)
-    ##                                         start = coef.pop,
+    ##                                         start = coef_pop,
     ##                                         burnin = 0)
 
-    ## tmp <- t(tnorm::rmvtnorm(500, mu.pop, sig.pop,
+    ## tmp <- t(tnorm::rmvtnorm(500, mu_pop, sig_pop,
     ##                             F = A,
-    ##                             g = -lower.pop,
-    ##                             ## start = start.pop,
+    ##                             g = -lower_pop,
+    ##                             ## start = start_pop,
     ##                             ## burnin = 1000)
-    ##                             initial = coef.pop,
+    ##                             initial = coef_pop,
     ##                             burn = 0))
 
 
     ## Update prediction contribution by the population curve.
-    pred.pop <- X.pop %*% coef.pop
-    y.diff.pop <- y.pop - pred.pop
+    pred_pop <- X_pop %*% coef_pop
+    y_diff_pop <- y_pop - pred_pop
 
     ## Update subject specific estimates
-    lower.sub <- -1 * (A %*% coef.pop)
+    lower_sub <- -1 * (A %*% coef_pop)
 
     ## initialise the starting values for the truncated normal sampler, and
-    ## the coef.sub matrix
-    zeros <- rep(0, n.terms)
-    coef.sub <- matrix(0, n.terms, length(lvl.sub),
-                       dimnames = list(NULL, lvl.sub))
+    ## the coef_sub matrix
+    zeros <- rep(0, n_terms)
+    coef_sub <- matrix(0, n_terms, length(lvl_sub),
+                       dimnames = list(NULL, lvl_sub))
 
 
     ## Calculate the precision matrix term
-    half.N <- diag(prc.sub, n.terms)
-    half.N[1:NROW(prc.poly), 1:NCOL(prc.poly)] <- prc.poly
-    half.N <- half.N / prc.eps
+    half_N <- diag(prc_sub, n_terms)
+    half_N[1:NROW(prc_poly), 1:NCOL(prc_poly)] <- prc_poly
+    half_N <- half_N / prc_eps
 
-    for (j in lvl.sub) {
-        idx <- idx.sub[[j]]
-        M.sub <- solve(X.sub.sq[, , j] + half.N)
-        mu.sub <- tcrossprod(M.sub, X.pop[idx, ]) %*% y.diff.pop[idx]
-        sig.sub <- M.sub / prc.eps
+    for (j in lvl_sub) {
+        idx <- idx_sub[[j]]
+        M_sub <- solve(X_sub_sq[, , j] + half_N)
+        mu_sub <- tcrossprod(M_sub, X_pop[idx, ]) %*% y_diff_pop[idx]
+        sig_sub <- M_sub / prc_eps
 
-        ## tmp <- TruncatedNormal::rmvtgauss.lin(500, mu.sub, sig.sub,
-        ##                                       Amat = A.t,
-        ##                                       Avec = lower.sub,
+        ## TRUNCATED NORMAL WITH BERWIN'S SAMPLER
+        ## tmp <- TruncatedNormal::rmvtgauss.lin(500, mu_sub, sig_sub,
+        ##                                       Amat = A_t,
+        ##                                       Avec = lower_sub,
         ##                                       ## start = zeros,
         ##                                       ## burnin = 1000)
-        ##                                       start = coef.sub[, j],
+        ##                                       start = coef_sub[, j],
         ##                                       burnin = 0)
 
-        ## coef.sub[, j] <- mvtnorm::rmvnorm(1, mu.sub, sig.sub)
+        ## ORDINARY NORMAL WITH BUILT IN SAMPLER
+        coef_sub[, j] <- mvtnorm::rmvnorm(1, mu_sub, sig_sub)
 
-        ## if (DEBUG) {
-        ##     arg2 <- list(mean = mu.sub, cov = sig.sub,
-        ##                  F = A, g = -lower.sub,
-        ##                  initial = coef.sub[, j])
-        ##     saveRDS(arg2, "~/Dropbox/master/algo/tmg/arg2.rds")
-        ## }
-        coef.sub[, j] <- tnorm::rmvtnorm(1, mu.sub, sig.sub,
-                                         F = A,
-                                         g = -lower.sub,
-                                         ## start = zeros,
-                                         ## burnin = 1000)
-                                         initial = coef.sub[, j],
-                                         burn = 20)
+        ## TRUNCATED NORMAL WITH MODIFIED HMC
+        ## coef_sub[, j] <- tnorm::rmvtnorm(1, mu_sub, sig_sub,
+        ##                                  F = A,
+        ##                                  g = -lower_sub,
+        ##                                  ## start = zeros,
+        ##                                  ## burnin = 1000)
+        ##                                  initial = coef_sub[, j],
+        ##                                  burn = 20)
 
 
         ## Update prediction contribution by subject curves
-        pred.sub[idx] <- X.pop[idx, ] %*% coef.sub[, j]
+        pred_sub[idx] <- X_pop[idx, ] %*% coef_sub[, j]
     }
 
-    list(coef.pop = coef.pop, coef.sub = coef.sub, pred.pop = pred.pop,
-         pred.sub = pred.sub)
+    list(coef_pop = coef_pop, coef_sub = coef_sub, pred_pop = pred_pop,
+         pred_sub = pred_sub)
 }
 
-## get a sample from the covariance/precision posterior (assuming 1 population)
+## get a sample from the precision posterior (one/multiple population)
 
 ## different in each ITERATION and POPULATION
-## coef.pop: population coefs (num vec list)
-## coef.sub: individual deviations (num mat list)
-## pred.pop: prediction contribution by the pop coefs (num vec list)
-## pred.sub: prediction contribution by the sub deviations (num vec list)
+## coef_pop: population coefs (num vec list)
+## coef_sub: individual deviations (num mat list)
+## pred_pop: prediction contribution by the pop coefs (num vec list)
+## pred_sub: prediction contribution by the sub deviations (num vec list)
 
 ## different in each POPULATION
-## y.pop: response data (num vec list)
+## y_pop: response data (num vec list)
 
 ## constants
-## idx.poly: indices to extract polynomial terms (num vec)
+## idx_poly: indices to extract polynomial terms (num vec)
 ## Kmat: to extract spline terms (num mat)
-## n.pops: number of populations (num)
-## n.subs: number of subjects (num vec)
-## n.spline: number of spline terms/knots (num)
-## n.samples: total sample size (num)
+## n_pops: number of populations (num)
+## n_subs: number of subjects (num vec)
+## n_spline: number of spline terms/knots (num)
+## n_samples: total sample size (num)
 
 ## RETURN
-## prc.eps: precision of the Gaussian noise (num)
-## prc.pop: precision of the population spline terms (num)
-## prc.poly: precision of the individual polynomial term (num mat)
-## prc.sub: precision of the individual spline terms (num)
-get_cov_tpf <- function(coef.pop, coef.sub, pred.pop, pred.sub, y.pop,
-                        idx.poly, Kmat, n.pops, n.subs, n.spline, n.samples) {
+## prc_eps: precision of the Gaussian noise (num)
+## prc_pop: precision of the population spline terms (num)
+## prc_poly: precision of the individual polynomial term (num mat)
+## prc_sub: precision of the individual spline terms (num)
+get_cov_tpf <- function(coef_pop, coef_sub, pred_pop, pred_sub, y_pop,
+                        idx_poly, Kmat, n_pops, n_subs, n_spline, n_samples) {
 
     ## hyperparameters of priors
-    ig.a <- 0.001
-    ig.b <- 0.001
-    wi.df <- 1
-    wi.sig <- diag(0.001, length(idx.poly))
+    ig_a <- 0.001
+    ig_b <- 0.001
+    wi_df <- 1
+    wi_sig <- diag(0.001, length(idx_poly))
 
-    if (typeof(coef.pop) == "list") coef.pop else list(coef.pop)
-    if (typeof(coef.sub) == "list") coef.sub else list(coef.sub)
-    if (typeof(pred.pop) == "list") pred.pop else list(pred.pop)
-    if (typeof(pred.sub) == "list") pred.sub else list(pred.sub)
+    ## if dealing with a single population model, convert everything to lists.
+    if (typeof(coef_pop) == "list") coef_pop else list(coef_pop)
+    if (typeof(coef_sub) == "list") coef_sub else list(coef_sub)
+    if (typeof(pred_pop) == "list") pred_pop else list(pred_pop)
+    if (typeof(pred_sub) == "list") pred_sub else list(pred_sub)
 
     ## crossprod of the spline terms
-    xspl.pop <- sum(vapply(coef.pop, function(x) crossprod(Kmat %*% x), 0))
-    xspl.sub <- sum(vapply(coef.sub, function(x) crossprod(c(Kmat %*% x)), 0))
+    xspl_pop <- sum(vapply(coef_pop, function(x) crossprod(Kmat %*% x), 0))
+    xspl_sub <- sum(vapply(coef_sub, function(x) crossprod(c(Kmat %*% x)), 0))
 
     ## precision of population spline terms
-    shp.pop <- (n.pops * n.spline) / 2 + ig.a
-    scl.pop <- 0.5 * xspl.pop + ig.b
-    prc.pop <- rgamma(1, shape = shp.pop, rate = scl.pop)
+    shp_pop <- (n_pops * n_spline) / 2 + ig_a
+    scl_pop <- 0.5 * xspl_pop + ig_b
+    prc_pop <- rgamma(1, shape = shp_pop, rate = scl_pop)
 
     ## precision of individual spline terms
-    shp.sub <- (sum(n.subs) * n.spline) / 2 + ig.a
-    scl.sub <- 0.5 * xspl.sub + ig.b
-    prc.sub <- rgamma(1, shape = shp.sub, rate = scl.sub)
+    shp_sub <- (sum(n_subs) * n_spline) / 2 + ig_a
+    scl_sub <- 0.5 * xspl_sub + ig_b
+    prc_sub <- rgamma(1, shape = shp_sub, rate = scl_sub)
 
     ## precision of residuals
-    resid.vec <- mapply(function(x, y, z) x - y - z,
-                        y.pop, pred.pop, pred.sub,
+    resid_vec <- mapply(function(x, y, z) x - y - z,
+                        y_pop, pred_pop, pred_sub,
                         SIMPLIFY = FALSE)
-    shp.eps <- 0.5 * n.samples + ig.a
-    scl.eps <- 0.5 * crossprod(unlist(resid.vec)) + ig.b
-    prc.eps <- rgamma(1, shape = shp.eps, rate = scl.eps)
+    shp_eps <- 0.5 * n_samples + ig_a
+    scl_eps <- 0.5 * crossprod(unlist(resid_vec)) + ig_b
+    prc_eps <- rgamma(1, shape = shp_eps, rate = scl_eps)
 
     ## tcrossprod of the polynomial terms, presented as a 3D array
-    txpoly <- vapply(coef.sub, function(x) tcrossprod(x[idx.poly, ]),
-                     diag(as.double(idx.poly)))
+    txpoly <- vapply(coef_sub, function(x) tcrossprod(x[idx_poly, , drop = FALSE]),
+                     diag(as.double(idx_poly)))
+
+    ## if there is only one row in coef_sub (i.e. model only with a random intercept)
+    if (!is.array(txpoly)) {
+        dim(txpoly) <- c(1, 1, 1)
+    }
 
     ## precision of individual polynomial terms
-    df.poly <- wi.df + sum(n.subs)
-    Sigma.poly <- solve(wi.sig + rowSums(txpoly, dims = 2))
-    prc.poly <- rWishart(1, df = df.poly, Sigma = Sigma.poly)[, , 1]
+    df_poly <- wi_df + sum(n_subs)
+    Sigma_poly <- solve(wi_sig + rowSums(txpoly, dims = 2))
+    prc_poly <- rWishart(1, df = df_poly, Sigma = Sigma_poly)[, , 1]
 
-    list(pop = prc.pop, sub = prc.sub, poly = prc.poly, eps = prc.eps)
+    list(pop = prc_pop, sub = prc_sub, poly = prc_poly, eps = prc_eps)
 }
 
-## Get an ordinary least squares estimate with a given response and design
-## matrix.
-get_ols <- function(response, design) {
-    tcrossprod(solve(crossprod(design)), design) %*% as.vector(response)
+
+## Fit a penalised spline with nlme. A random effect is added to each population
+## coefficient.
+## data : 1st col x, 2nd col y, 3rd col groups
+## K : number of quantile (inner) knots, or a vector of inner knots
+## deg : degree of spline polynomial
+lme_tpf <- function(data, K, deg = 1) {
+    x <- data[[1]]
+    y <- data[[2]]
+
+    ## convert the group variable into a factor
+    if (is.factor(data[[3]])) {
+        grp <- droplevels(data[[3]])
+    } else {
+        grp <- factor(data[[3]], levels = unique(data[[3]]))
+    }
+
+    ## dummy variable of ones
+    ones <- rep(1, length(grp))
+
+    ## design matrices
+    design_ls <- get_design_tpf(x, K, deg)
+    X <- design_ls$design[, 1:(deg + 1)]
+    Z <- design_ls$design[, (deg + 2):(deg + 1 + K)]
+
+    ## covariance structures of random effects
+    pop.pd <- nlme::pdIdent(~ Z - 1)
+    sub.pd <- nlme::pdBlocked(list(nlme::pdSymm(~ X - 1), nlme::pdIdent(~ Z - 1)))
+
+    fm <- nlme::lme(fixed = y ~ X - 1, random = list(ones = pop.pd, grp = sub.pd))
+
+    ## extract coefficients
+    pop_coef <- as.numeric(coef(fm, level = 1))
+    sub_coef <- t(as.matrix(coef(fm, level = 2))) - pop_coef
+    colnames(sub_coef) <- levels(grp)
+    rownames(sub_coef) <- NULL
+
+    means <- list(population = pop_coef, subjects = sub_coef)
+    basis <- list(type = "tpf", knots = design_ls$knots, degree = deg)
+    info <- list(lvl_pop = NULL, lvl_sub = levels(grp), n_terms = deg + 1 + K)
+    data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
+
+    list(means = means, samples = NULL, basis = basis, info = info,
+         data = data, lme_model = fm)
 }
+
+
 ## fit_
 ##     pop_pd <- nlme::pdIdent(~ Z.q - 1)
 ##     ## sub.pd.q <- pdBlocked(list(pdSymm(~ time.q + I(time.q^2)), pdIdent(~ Z.q - 1)))

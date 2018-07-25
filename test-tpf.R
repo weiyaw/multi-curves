@@ -3,77 +3,32 @@ rm(list = ls())
 setwd("~/Dropbox/master/algo/")
 source("main-tpf.R")
 source("subor.R")
-sitka <- read.table("data/sitka10.txt", header = T)
+sitka10 <- read.table("data/sitka10.txt", header = T)
 ##sitka <- read.table("data/sitka.txt", header = T)
 
-## Initialise dataset and factors
-y <- sitka$log.size
-## y[length(y)] <- 1                       # Introduce an outlier
-id.num <- sitka$id.num
-n <- NROW(sitka)
-K <- 5
-n.subject <- length(unique(sitka$id.num))
-n.per.sub <- tapply(sitka$id.num, sitka$id.num, length)
-pop.level <- factor(rep(1, n))
-sub.level <- factor(sitka$id.num)
 
 
-## Construct the knots, fixed and random effects design matrix (linear spline)
-time.l <- sitka$days / 674
-knots.l <- quantile(unique(time.l), seq(0, 1, length = K + 2))[-c(1, K + 2)]
-X.l <- model.matrix(y ~ time.l, sitka)
-Z.l <- outer(time.l, knots.l, `-`)
-Z.l <- Z.l * (Z.l > 0)
+sitka10 <- read.table("data/sitka10.txt", header = T)
+sitka10 <- with(sitka10, data.frame(x = days / 674,
+                                    y = log.size / 6,
+                                    grp.sub = factor(id.num),
+                                    grp.pop = ozone))
+levels(sitka10$grp.sub) <- c(levels(sitka10$grp.sub)[3:10], levels(sitka10$grp.sub)[1:2])
+## linear spline
+lm1 <- lmm_tpf(sitka10, K = 5, deg = 1)
 
-## Fit a lme model (linear)
-pop.pd.l <- pdIdent(~ Z.l - 1)
-sub.pd.l <- pdBlocked(list(pdSymm(~ time.l), pdIdent(~ Z.l - 1)))
-lin.fm <- lme(fixed = y ~ time.l,
-              random = list(pop.level = pop.pd.l, sub.level = sub.pd.l))
+## quadratic spline (algorithm diverges)
+## only works if the random effect of the quadratic polynomial term is removed
+lmm_tpf(sitka10, K = 5, deg = 2)
 
-## Construct the knots, fixed and random effects design matrix (linear spline)
-time.q <- sitka$days / 67.4
-knots.q <- quantile(unique(time.q), seq(0, 1, length = K + 2))[-c(1, K + 2)]
-X.q <- model.matrix(y ~ time.q + I(time.q^2), sitka)
-Z.q <- outer(time.q, knots.q, `-`)
-Z.q <- Z.q^2 * (Z.q > 0)
+
 
 ## Fit a lme model (quadratic)
-pop.pd.q <- pdIdent(~ Z.q - 1)
 ## sub.pd.q <- pdBlocked(list(pdSymm(~ time.q + I(time.q^2)), pdIdent(~ Z.q - 1)))
 ## sub.pd.q <- pdSymm(~ time.q + I(time.q^2))
-sub.pd.q <- pdBlocked(list(pdSymm(~ 1), pdIdent(~ Z.q - 1)))
-quad.fm <- lme(fixed = y ~ time.q + I(time.q^2),
-               random = list(pop.level = pop.pd.q, sub.level = sub.pd.q))
-
-## TEST LINEAR SPLINE
-
-lin.sample1 <- SubjectLin(y, X.l, Z.l, lin.fm, 100, 10)
-lapply(lin.sample1, rowMeans)
-## lin.sample2 <- SubjectLin(y, X.l, Z.l, lin.fm, 10000, 100)
-
-## grps.fact <- factor(lin.fm$groups$sub.level,
-##                     levels = unique(lin.fm$groups$sub.level))
-## PlotLinMean(lin.sample1, knots.l, range(time.l),
-##             data.frame(time.l, y, grps.fact))
-
-## PlotLinMean(lin.sample2, knots.l, range(time.l),
-##             data.frame(time.l, y, grps.fact))
-
-## uncon.set <- cbind(t(coef(lin.fm)), t(coef(lin.fm, level = 1)))
-## colnames(uncon.set) <- with(lin.fm$groups, c(levels(sub.level), "population"))
-## PlotLinSpline(uncon.set, knots.l, range(time.l),
-##               data.frame(time.l, y, lin.fm$groups$sub.level))
-
-
-## TEST QUADRATIC SPLINE
-
-## post <- SubjectQuad(y, X.q, Z.q, quad.fm, knots.q, range(time.q), 5000, 1)
-
-## source("subor.R")
-## quad.co <- t(coef(quad.fm, level = 2))
-## PlotQuadSpline(quad.co, knots.q, range(time.q),
-##                data.frame(time.q, y, quad.fm$groups$sub.level))
+## sub.pd.q <- pdBlocked(list(pdSymm(~ time.q), pdIdent(~ Z.q - 1)))
+## quad.fm <- lme(fixed = y ~ time.q + I(time.q^2),
+##                random = list(pop.level = pop.pd.q, sub.level = sub.pd.q))
 
 
 
@@ -213,10 +168,7 @@ plot_spline(fm2t)
 fm6 <- readRDS("simulations/multi/multi-growth.rds")
 fm7 <- readRDS("simulations/multi/multi-growth-uncon.rds")
 growth <- reshape2::melt(fda::growth[-3])
-growth <- with(growth, data.frame(x = Var1,
-                                  y = value,
-                                  grp.sub = Var2,
-                                  grp.pop = L1))
+growth <- with(growth, data.frame(x = Var1, y = value, grp.sub = Var2, grp.pop = L1))
 growth10 <- subset(growth,
                    grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
                                   "girl01", "girl02", "girl03", "girl04", "girl05"),
@@ -233,7 +185,7 @@ growth20$grp.sub <- droplevels(growth20$grp.sub)
 
 set.seed(1)
 source("main-tpf.R")
-system.time(fm8 <- SubjectsTpf(growth20, 8, deg = 2, shape = "increasing", size = 40000, burn = 0, verbose = T))
+system.time(fm8 <- SubjectsTpf(growth20, 8, deg = 2, shape = "increasing", size = 15000, burn = 0, verbose = T))
 
 plot(fm8$samples$population[1, ])
 plot(fm8$samples$population[2, ])
@@ -256,6 +208,7 @@ plot(fm8$samples$subjects[6, 1, ])
 plot(fm8$samples$subjects[7, 1, ])
 plot(fm8$samples$subjects[8, 1, ])
 plot(fm8$samples$subjects[9, 1, ])
+plot(fm8$samples$subjects[10, 1, ])
 plot(fm8$samples$subjects[11, 1, ])
 
 plot(1 / fm8$samples$precision$pop)
@@ -361,3 +314,10 @@ plot_spline(fm11t)
 get_array_invs <- function(ary) {
     array(apply(ary, 3, solve), dim(ary))
 }
+
+## models without random effects on spline coefficients
+source("pop-tpf.R")
+fmpop <- pop_tpf(growth10, 8, deg = 2, shape = "increasing", size = 10000, burn = 0, verbose = T)
+plot_spline(fmpop)
+
+

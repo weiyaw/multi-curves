@@ -422,3 +422,12 @@ truncate_spline <- function(model, size) {
     model$means <- rapply(model$samples, helper_mean, how = "list")
     model
 }
+
+
+## Get an ordinary least squares estimate with a given response and design
+## matrix.
+get_ols <- function(response, design) {
+    tcrossprod(solve(crossprod(design)), design) %*% as.vector(response)
+}
+
+

@@ -309,7 +309,10 @@ PlotSpline <- function(model, limits, data, fine = 200) {
 }
 
 
-## plot multiple lines
+## Plot multiple lines
+## Requires: model$basis$knots (including extrema), model$basis$type,
+##   model$basis$degree, model$info$lvl_pop, model$data, model$mean
+##
 plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200) {
 
     EPS <- 1e-6
