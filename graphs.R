@@ -1,4 +1,4 @@
-source("subor.R")
+source("./subor.R")
 
 #' Plot the means of linear spline models.
 #'
@@ -313,7 +313,7 @@ PlotSpline <- function(model, limits, data, fine = 200) {
 ## Requires: model$basis$knots (including extrema), model$basis$type,
 ##   model$basis$degree, model$info$lvl_pop, model$data, model$mean
 ##
-plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200) {
+plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle = FALSE) {
 
     EPS <- 1e-6
     knots <- model$basis$knots
@@ -360,9 +360,14 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200) {
         stop("Unknown type of model.")
     }
 
-    ## Extract the posterior means
-    coef_pop <- model$means$population
-    dev_sub <- model$means$subjects
+    if (mle) {
+        ## Extract the posterior means
+        coef_pop <- model$means$population
+        dev_sub <- model$means$subjects
+    } else {
+        coef_pop <- model$mle$population
+        dev_sub <- model$mle$subjects
+    }
 
     ## Helper function to calculate the y axis of the plot
     get_plot_y <- function(coef) {
@@ -407,17 +412,17 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200) {
                      get_design_tpf(data$x[data$pop == plot_which[1]], knots, deg)$design)
     ols <- data.frame(x = plot_x,
                       y = get_plot_y(ols_y))
-
     aes <- ggplot2::aes
     geom_point <- ggplot2::geom_point
     geom_line <- ggplot2::geom_line
 
     for (i in plot_which) {
+        ## for each population
         ggobj <- ggplot2::ggplot(mapping = aes(x, y, col = sub)) +
-            geom_point(data = data[data$pop == i, ]) +
-            geom_line(aes(group = sub), data = plotdat_sub[[i]]) +
-            geom_line(aes(col = NULL), data = plotdat_pop[[i]]) ## +
-            ## geom_line(aes(col = NULL), data = ols, col = 'red')
+            geom_point(data = data[data$pop == i, ]) +             # dataset
+            geom_line(aes(group = sub), data = plotdat_sub[[i]]) + # subject-specific curves
+            geom_line(aes(col = NULL), data = plotdat_pop[[i]])    # population curve
+        ## + geom_line(aes(col = NULL), data = ols, col = 'red')
         print(ggobj)
     }
 

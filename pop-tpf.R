@@ -25,13 +25,13 @@ pop_tpf <- function(data, K, deg = 1, random = deg + 1, shape = "increasing",
         grp <- factor(data[[3]], levels = unique(data[[3]]))
     }
 
+    n_samples <- NROW(data)
     n_terms_pop <- K + deg + 1
 
-    if (random > deg + 1) {
-        stop("Number of random effects exceeds polynomial coefficients.")
+    if (!(random > 0 || random < deg + 2)) {
+        stop("Unsupported number of random effects.")
     }
     n_terms_sub <- random
-    n_samples <- NROW(data)
 
     lvl_sub <- levels(grp)
     idx_sub <- tapply(seq_len(n_samples), grp, function(x) x)
@@ -95,8 +95,8 @@ pop_tpf <- function(data, K, deg = 1, random = deg + 1, shape = "increasing",
     ## sub: subject deviations; eps: error terms.
     samples$precision$pop <- rep(NA, size)
     samples$precision$poly <- array(NA, c(deg + 1, deg + 1, size))
-    ## samples$precision$sub <- rep(NA, size)
     samples$precision$eps <- rep(NA, size)
+    ## samples$precision$sub <- rep(NA, size)
 
     ## burnin followed by actual sampling
     for (k in seq.int(-burn + 1, size)) {

@@ -1,26 +1,117 @@
-library(nlme)
+
 rm(list = ls())
 setwd("~/Dropbox/master/algo/")
 source("main-tpf.R")
-source("subor.R")
-sitka10 <- read.table("data/sitka10.txt", header = T)
-##sitka <- read.table("data/sitka.txt", header = T)
+source("graphs.R")
 
+sitka <- read.table("data/sitka.txt", header = T)
+sitka <- with(sitka, data.frame(x = days / 674,
+                                y = log.size,
+                                grp.sub = factor(id.num),
+                                grp.pop = ozone))
 
+sitka5 <- read.table("data/sitka5.txt", header = T)
+sitka5 <- with(sitka5, data.frame(x = days / 674,
+                                  y = log.size,
+                                  grp.sub = factor(id.num),
+                                  grp.pop = ozone))
 
 sitka10 <- read.table("data/sitka10.txt", header = T)
 sitka10 <- with(sitka10, data.frame(x = days / 674,
-                                    y = log.size / 6,
+                                    y = log.size,
                                     grp.sub = factor(id.num),
                                     grp.pop = ozone))
-levels(sitka10$grp.sub) <- c(levels(sitka10$grp.sub)[3:10], levels(sitka10$grp.sub)[1:2])
+
+growth <- reshape2::melt(fda::growth[-3])
+growth <- with(growth, data.frame(x = Var1, y = value, grp.sub = Var2, grp.pop = L1))
+growth10 <- subset(growth,
+                   grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
+                                  "girl01", "girl02", "girl03", "girl04", "girl05"),
+                   drop = TRUE)
+growth10$grp.sub <- droplevels(growth10$grp.sub)
+
+growth20 <- subset(growth,
+                   grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
+                                  "girl01", "girl02", "girl03", "girl04", "girl05",
+                                  "boy06", "boy07", "boy08", "boy09", "boy10",
+                                  "girl06", "girl07", "girl08", "girl09", "girl10"),
+                   drop = TRUE)
+growth20$grp.sub <- droplevels(growth20$grp.sub)
+
+
+source("main-tpf.R")
 ## linear spline
-lm1 <- lmm_tpf(sitka10, K = 5, deg = 1)
+fm1_1 <- lme_tpf(sitka10, K = 5, deg = 1)
+source("graphs.R")
+plot_spline(fm1_1)
+fm2_1 <- lme_tpf(growth10, K = 8, deg = 1)
+plot_spline(fm2_1)
 
 ## quadratic spline (algorithm diverges)
 ## only works if the random effect of the quadratic polynomial term is removed
-lmm_tpf(sitka10, K = 5, deg = 2)
+fm1_2 <- lme_tpf(sitka10, K = 5, deg = 2)
+plot_spline(fm1_2)
+fm2_2 <- lme_tpf(growth10, K = 8, deg = 2)
+plot_spline(fm2_2)
 
+
+data <- growth10
+K_pop <- 8
+K_sub <- 7
+deg <- 2
+
+x <- data[[1]] / max(data[[1]])
+y <- data[[2]] / max(data[[2]])
+
+## convert the group variable into a factor
+if (is.factor(data[[3]])) {
+    grp <- droplevels(data[[3]])
+} else {
+    grp <- factor(data[[3]], levels = unique(data[[3]]))
+}
+
+## dummy variable of ones
+ones <- rep(1, length(grp))
+
+## design matrices for the population curve
+des_ls_pop <- get_design_tpf(x, K_pop, deg)
+X_pop <- des_ls_pop$design[, 1:(deg + 1)]
+Z_pop <- des_ls_pop$design[, (deg + 2):(deg + 1 + K_pop)]
+
+## design matrices for subject-specific curves
+des_ls_sub <- get_design_tpf(x, K_sub, deg)
+X_sub <- des_ls_sub$design[, 1:(deg + 1)]
+Z_sub <- des_ls_sub$design[, (deg + 2):(deg + 1 + K_sub)]
+
+## covariance structures of random effects
+pop_pd <- nlme::pdIdent(~ Z_pop - 1)
+sub_pd <- nlme::pdBlocked(list(nlme::pdSymm(~ X_sub - 1), nlme::pdIdent(~ Z_sub - 1)))
+
+fm <- nlme::lme(fixed = y ~ X_pop - 1, random = list(ones = pop_pd, grp = sub_pd),
+                control = list(maxIter = 50, msMaxIter = 150, niterEM = 150))
+
+## the range of x to plot
+plot_x <- c(seq(min(data$x), max(data$x), length = 200), des_ls_pop$knots, des_ls_sub$knots)
+plot_x <- sort(unique(plot_x))
+
+## design matrix corresponding to the range to plot
+des_plot_pop <- get_design_tpf(plot_x, des_ls_pop$knots, deg = deg)
+des_plot_sub <- get_design_tpf(plot_x, des_ls_sub$knots, deg = deg)
+C_mat <- cbind(des_plot_pop$design, des_plot_sub$design)
+plot_y_pop <- C_mat %*% c(as.numeric(coef(fm, level = 1)), rep(0, deg + 1 + K_sub))
+plot_y_sub <- C_mat %*% t(as.matrix(coef(fm, level = 2)))
+colnames(plot_y_sub) <- levels(grp)
+
+## construct suitable data frames for ggplot
+ori_dat <- with(data, data.frame(x = x, y = y, sub = grp.sub))
+plot_dat_pop <- data.frame(x = plot_x, y = plot_y_pop)
+plot_dat_sub <- reshape2::melt(plot_y_sub, varnames = c("x", "sub"), as.is = TRUE, value.name = "y")
+plot_dat_sub$x <- plot_x
+library(ggplot2)
+ggplot(mapping = aes(x, y, col = sub)) +
+    geom_point(data = ori_dat) +
+    geom_line(aes(group = sub), data = plot_dat_sub) +
+    geom_line(aes(col = NULL), data = plot_dat_pop)
 
 
 ## Fit a lme model (quadratic)
@@ -33,11 +124,6 @@ lmm_tpf(sitka10, K = 5, deg = 2)
 
 
 ## TEST MIXED MODEL LINEAR SPLINE (SubjectsTpf)
-rm(list = ls())
-sitka <- read.table("data/sitka5.txt", header = T)
-sitka <- with(sitka, data.frame(x = days / 674,
-                                y = log.size,
-                                grps = id.num))
 source("main-tpf.R")
 ## system.time(fm2 <- get_tpf_old(sitka, 5, 2, size = 100, burn = 0))
 saveRDS(fm2, "tpf-long.rds")
@@ -55,20 +141,7 @@ PlotSpline(fm4, range(sitka$x), sitka)
 ## TEST MIXED MODEL LINEAR SPLINE WITH MULTIPLE POPULATION (SubjectsTpfMul)
 ## LOAD DATA sitka10 and sitka
 rm(list = ls())
-sitka10 <- read.table("data/sitka10.txt", header = T)
-sitka10 <- with(sitka10, data.frame(x = days / 674,
-                                    y = log.size,
-                                    grp.sub = id.num,
-                                    grp.pop = ozone))
-sitka10$grp.sub <- factor(sitka10$grp.sub,
-                          levels = c("1", "2", "3", "4", "5",
-                                     "60", "59", "56", "57", "58"))
 
-sitka <- read.table("data/sitka.txt", header = T)
-sitka <- with(sitka, data.frame(x = days / 674,
-                                y = log.size,
-                                grp.sub = id.num,
-                                grp.pop = ozone))
 
 source("main-tpf.R")
 source("graphs.R")
@@ -164,11 +237,11 @@ fm2t <- truncate(fm2, 300)
 plot_spline(fm2t)
 
 
-## Berkeley growth dataset
+#### BERKELY GROWTH DATASET ####
 fm6 <- readRDS("simulations/multi/multi-growth.rds")
 fm7 <- readRDS("simulations/multi/multi-growth-uncon.rds")
 growth <- reshape2::melt(fda::growth[-3])
-growth <- with(growth, data.frame(x = Var1, y = value, grp.sub = Var2, grp.pop = L1))
+growth <- with(growth, data.frame(x = Var1 / max(Var1), y = value / max(value), grp.sub = Var2, grp.pop = L1))
 growth10 <- subset(growth,
                    grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
                                   "girl01", "girl02", "girl03", "girl04", "girl05"),
@@ -183,9 +256,12 @@ growth20 <- subset(growth,
                    drop = TRUE)
 growth20$grp.sub <- droplevels(growth20$grp.sub)
 
+
+
+
 set.seed(1)
 source("main-tpf.R")
-system.time(fm8 <- SubjectsTpf(growth20, 8, deg = 2, shape = "increasing", size = 15000, burn = 0, verbose = T))
+system.time(fm8 <- sub_tpf(growth10, 8, deg = 2, penalty = FALSE, shape = "increasing", size = 10000, burn = 0, verbose = T))
 
 plot(fm8$samples$population[1, ])
 plot(fm8$samples$population[2, ])
@@ -215,13 +291,14 @@ plot(1 / fm8$samples$precision$pop)
 plot(1 / fm8$samples$precision$sub)
 plot(fm8$samples$precision$eps)
 
-plot_spline(fm8)
-plot_spline(truncate_spline(fm8, 10000))
+source("graphs.R")
+plot_spline(fm8, mle = T)
+plot_spline(truncate_spline(fm8, 5000))
 
 
-set.seed(1)
+set.seed(2)
 source("main-tpf.R")
-system.time(fm9 <- SubjectsTpf(growth10, 8, deg = 2, shape = "increasing", size = 40000, burn = 0, verbose = T))
+system.time(fm9 <- sub_tpf(growth10, 8, deg = 2, penalty = FALSE, shape = "increasing", size = 10000, burn = 0, verbose = T))
 
 plot(fm9$samples$population[1, ])
 plot(fm9$samples$population[2, ])
@@ -235,17 +312,17 @@ plot(fm9$samples$population[9, ])
 plot(fm9$samples$population[10, ])
 plot(fm9$samples$population[11, ])
 
-plot(fm9$samples$subjects[1, 1, ])
-plot(fm9$samples$subjects[2, 1, ])
-plot(fm9$samples$subjects[3, 1, ])
-plot(fm9$samples$subjects[4, 1, ])
-plot(fm9$samples$subjects[5, 1, ])
-plot(fm9$samples$subjects[6, 1, ])
-plot(fm9$samples$subjects[7, 1, ])
-plot(fm9$samples$subjects[8, 1, ])
-plot(fm9$samples$subjects[9, 1, ])
-plot(fm9$samples$subjects[10, 1, ])
-plot(fm9$samples$subjects[11, 1, ])
+hist(fm9$samples$subjects[1, 10, ])
+hist(fm9$samples$subjects[2, 10, ])
+hist(fm9$samples$subjects[3, 10, ])
+hist(fm9$samples$subjects[4, 10, ])
+hist(fm9$samples$subjects[5, 10, ])
+hist(fm9$samples$subjects[6, 10, ])
+hist(fm9$samples$subjects[7, 10, ])
+hist(fm9$samples$subjects[8, 10, ])
+hist(fm9$samples$subjects[9, 10, ])
+hist(fm9$samples$subjects[10, 10, ])
+hist(fm9$samples$subjects[11, 10, ])
 
 plot(1 / fm9$samples$precision$pop)
 plot(1 / fm9$samples$precision$sub)
@@ -317,7 +394,13 @@ get_array_invs <- function(ary) {
 
 ## models without random effects on spline coefficients
 source("pop-tpf.R")
-fmpop <- pop_tpf(growth10, 8, deg = 2, shape = "increasing", size = 10000, burn = 0, verbose = T)
+set.seed(1)
+fmpop <- pop_tpf(growth10, 8, deg = 2, random = 11, shape = "increasing", size = 100, burn = 0, verbose = T)
 plot_spline(fmpop)
 
 
+## FAKE data
+source("main-tpf.R")
+design_ls <- get_design_tpf(growth10$x, 5, 2)
+
+fake_data <- data.frame()

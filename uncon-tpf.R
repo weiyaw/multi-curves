@@ -4,8 +4,8 @@ source("subor.R")
 ## data : 1st col x, 2nd col y, 3rd col groups
 ## K : number of quantile (inner) knots, or a vector of inner knots
 ## deg : degree of spline polynomial
-sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size = 100,
-                    burn = size / 10, verbose = FALSE) {
+sub_tpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
+                        burn = size / 10, verbose = FALSE) {
 
     if (deg != 1 && deg != 2) {
         stop("Invalid spline degree. Must be 1 or 2.")
@@ -91,7 +91,6 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
     samples$precision$poly <- array(NA, c(deg + 1, deg + 1, size))
     samples$precision$sub <- rep(NA, size)
     samples$precision$eps <- rep(NA, size)
-    loglike_ls <- rep(NA, size)
 
     ## burnin followed by actual sampling
     for (k in seq.int(-burn + 1, size)) {
@@ -100,11 +99,8 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
                               list(kpred_sub), list(y), idx_poly, Kmat, 1,
                               n_subs, n_spline, n_samples)
 
-        ## no penalty on the population spline terms
-        if (!penalty) {kprecs$pop <- 0}
-
         ## get the coefs and deviations
-        kcoefs <- get_coefs_hmc(kcoef_pop, kcoef_sub, kpred_sub, X_pop, X_pop_sq, X_sub_sq,
+        kcoefs <- get_coefs_tpf(kcoef_sub, kpred_sub, X_pop, X_pop_sq, X_sub_sq,
                                 lvl_sub, idx_sub, y, kprecs$eps, kprecs$pop,
                                 kprecs$poly, kprecs$sub, A, A_t, A_inv, Kmat,
                                 n_terms)
@@ -125,9 +121,6 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
             ## store the coefs and deviations
             samples$population[, k] <- kcoef_pop
             samples$subjects[, , k] <- kcoef_sub
-
-            ## store the log-likelihood
-            loglike_ls[k] <- kcoefs$loglike
         }
 
         if (verbose && (k %% 1000 == 0)) {
@@ -142,17 +135,10 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
     basis <- list(type = "tpf", knots = knots, degree = deg)
     info <- list(lvl_pop = NULL, lvl_sub = lvl_sub, n_terms = n_terms)
     data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
-    mle_idx <- which.max(loglike_ls)
-    mle <- list(population = samples$population[, mle_idx],
-                subjects = samples$subjects[, , mle_idx],
-                loglike = loglike_ls[mle_idx])
 
     list(means = means, samples = samples, basis = basis, info = info,
-         data = data, mle = mle)
+         data = data)
 }
-
-
-source("subor.R")
 
 
 ## Subjects model with multiple population curves
@@ -319,7 +305,7 @@ multisub_tpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
         ## DEBUG
         ## if (k == 67) {DEBUG <- TRUE}
         ## if (k == 68) {DEBUG <- FALSE}
-        kcoefs <- mapply(get_coefs_tpf, kcoef_pop, kcoef_sub, kpred_sub, X_pop,
+        kcoefs <- mapply(get_coefs_tpf, kcoef_sub, kpred_sub, X_pop,
                          X_pop_sq, X_sub_sq, lvl_sub, idx_sub,
                          y_pop,
                          MoreArgs = list(kprecs$eps, kprecs$pop,
@@ -364,8 +350,7 @@ multisub_tpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
 ## get a sample from the coefs posterior (one population)
 
 ## different in each ITERATION and POPULATION
-## coef_pop: previous population estimate (num vec)
-## coef_sub: previous individual deviations (num mat)
+## coef_sub: individual deviations (num mat)
 ## pred_sub: prediction contribution by the sub deviations (num vec)
 
 ## different in each POPULATION
@@ -394,7 +379,7 @@ multisub_tpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
 ## coef_sub: individual deviations (num mat)
 ## pred_pop: prediction contribution by the pop coefs (num vec)
 ## pred_sub: prediction contribution by the sub deviations (num vec)
-get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_sq,
+get_coefs_tpf <- function(coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_sq,
                           lvl_sub, idx_sub, y_pop,
                           prc_eps, prc_pop, prc_poly, prc_sub, A,
                           A_t, A_inv, Kmat, n_terms, DEBUG = FALSE) {
@@ -423,16 +408,16 @@ get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
     ##                                         burnin = 500)
 
     ## ORDINARY NORMAL WITH BUILT IN SAMPLER
-    ## coef_pop <- t(mvtnorm::rmvnorm(1, mu_pop, sig_pop))
+    coef_pop <- t(mvtnorm::rmvnorm(1, mu_pop, sig_pop))
 
     ## TRUNCATED NORMAL WITH MODIFIED HMC
-    coef_pop <- t(tnorm::rmvtnorm(1, mu_pop, sig_pop,
-                                F = A,
-                                g = -lower_pop,
-                                ## start = start_pop,
-                                ## burnin = 1000)
-                                initial = coef_pop,
-                                burn = 20))
+    ## coef_pop <- t(tnorm::rmvtnorm(1, mu_pop, sig_pop,
+    ##                             F = A,
+    ##                             g = -lower_pop,
+    ##                             ## start = start_pop,
+    ##                             ## burnin = 1000)
+    ##                             initial = coef_pop,
+    ##                             burn = 20))
 
     ## tmp <- TruncatedNormal::rmvtgauss.lin(500, mu_pop, sig_pop,
     ##                                         Amat = A_t,
@@ -486,16 +471,16 @@ get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
         ##                                       burnin = 0)
 
         ## ORDINARY NORMAL WITH BUILT IN SAMPLER
-        ## coef_sub[, j] <- mvtnorm::rmvnorm(1, mu_sub, sig_sub)
+        coef_sub[, j] <- mvtnorm::rmvnorm(1, mu_sub, sig_sub)
 
         ## TRUNCATED NORMAL WITH MODIFIED HMC
-        coef_sub[, j] <- tnorm::rmvtnorm(1, mu_sub, sig_sub,
-                                         F = A,
-                                         g = -lower_sub,
-                                         ## start = zeros,
-                                         ## burnin = 1000)
-                                         initial = coef_sub[, j],
-                                         burn = 20)
+        ## coef_sub[, j] <- tnorm::rmvtnorm(1, mu_sub, sig_sub,
+        ##                                  F = A,
+        ##                                  g = -lower_sub,
+        ##                                  ## start = zeros,
+        ##                                  ## burnin = 1000)
+        ##                                  initial = coef_sub[, j],
+        ##                                  burn = 20)
 
 
         ## Update prediction contribution by subject curves
@@ -505,81 +490,6 @@ get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
     list(coef_pop = coef_pop, coef_sub = coef_sub, pred_pop = pred_pop,
          pred_sub = pred_sub)
 }
-
-## HMC version of get_coefs
-get_coefs_hmc <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_sq,
-                          lvl_sub, idx_sub, y_pop,
-                          prc_eps, prc_pop, prc_poly, prc_sub, A,
-                          A_t, A_inv, Kmat, n_terms, DEBUG = FALSE) {
-
-    ## design matrix
-    C_diag <- lapply(idx_sub, function(x) X_pop[x, ])
-    C_diag <- DiagMat(C_diag)
-    C <- cbind(X_pop, C_diag)
-
-    ## penalty variance
-    D_top <- Kmat * prc_pop
-    D_btm <- DiagMat(DiagMat(list(prc_poly, diag(prc_sub, sum(Kmat)))), length(idx_sub))
-    D_inv <- prc_eps * DiagMat(list(D_top, D_btm))
-
-    ## constraint matrix
-    A_big <- DiagMat(A, length(lvl_sub) + 1)
-    A_big[, 1:NCOL(A)] <- matrix(rep(t(A), length(lvl_sub) + 1), ncol = NCOL(A), byrow = TRUE)
-
-
-    ## lower bound of the constraint
-    lower <- rep(0, times = NROW(A_big))
-
-
-    ## initialise the starting values of the truncated normal sampler
-    if (any(A %*% coef_pop <= 0)) {
-        coefs <- rep(A_inv %*% (lower[1:NCOL(A)] + 1), length(lvl_sub) + 1)
-        ## print("no satisfaction.")
-    } else {
-        coefs <- c(coef_pop, coef_sub)
-    }
-
-    ## calculate "posterior" mean and variance
-    M <- solve(crossprod(C) + D_inv)
-    mu <- tcrossprod(M, C) %*% y_pop
-    sig <- M / prc_eps
-
-    ## TRUNCATED NORMAL WITH MODIFIED HMC
-
-    ## coefs <- t(tnorm::rmvtnorm(1, mu, sig, F = NULL, g = NULL,
-    ##                           ## start = start_pop,
-    ##                           ## burnin = 1000)
-    ##                           initial = coefs,
-    ##                           burn = 20))
-
-    coefs <- t(tnorm::rmvtnorm(1, mu, sig, F = A_big, g = -lower,
-                              ## start = start_pop,
-                              ## burnin = 1000)
-                              initial = coefs,
-                              burn = 20))
-
-    coef_pop <- coefs[1:n_terms]
-    coef_sub <- matrix(coefs[-(1:n_terms)], n_terms, length(lvl_sub),
-                        dimnames = list(NULL, lvl_sub))
-
-
-    ## Update prediction contribution by the population curve.
-    pred_pop <- X_pop %*% coef_pop
-    y_diff_pop <- y_pop - pred_pop
-
-    for (j in lvl_sub) {
-        idx <- idx_sub[[j]]
-
-        ## Update prediction contribution by subject curves
-        pred_sub[idx] <- X_pop[idx, ] %*% coef_sub[, j]
-    }
-
-    loglike <- mvtnorm::dmvnorm(t(coefs), mu, sig, log = TRUE)
-
-    list(coef_pop = coef_pop, coef_sub = coef_sub, pred_pop = pred_pop,
-         pred_sub = pred_sub, loglike = loglike)
-}
-
 
 ## get a sample from the precision posterior (one/multiple population)
 
@@ -611,7 +521,7 @@ get_cov_tpf <- function(coef_pop, coef_sub, pred_pop, pred_sub, y_pop,
     ## hyperparameters of priors
     ig_a <- 0.001
     ig_b <- 0.001
-    wi_df <- length(idx_poly)
+    wi_df <- 1
     wi_sig <- diag(0.001, length(idx_poly))
 
     ## if dealing with a single population model, convert everything to lists.

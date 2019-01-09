@@ -251,7 +251,7 @@ DiffMat <- function(size, k) {
 
 #' Construct an equidistant B-splines design matrix
 #'
-#' \code{BSplineDesign} returns an equidistant B-splines design matrix without
+#' \code{get_design_bs} returns an equidistant B-splines design matrix without
 #' explicitly specifying the location of the knots.
 #'
 #' The knots locations are the minimum and maximum of \code{x}, and \code{K}
@@ -260,17 +260,31 @@ DiffMat <- function(size, k) {
 #' \code{splines::splineDesign}.
 #'
 #' @param x predictor vector. Required.
-#' @param K number of inner knots. Required.
+#' @param K number of inner knots, or a vector of all knots (internal and
+#'     outer). Required.
 #' @param deg the degree of polynomial which the B-splines span. Required.
 #' @param EPS tolerance error.
 #'
 #' @return a list with components `design' (\code{length(x)} by \code{K + deg + 1}
 #'     design matrix) and all `knots' (inner and outer).
-BSplineDesign <- function(x, K, deg, EPS = 1e-6) {
-    dist <- diff(range(x)) / (K + 1)
-    knots <- seq(min(x) - (deg * dist) - EPS, max(x) + (deg * dist) + EPS,
-                 len = K + 2 * (deg + 1))
+get_design_bs <- function(x, K, deg, EPS = 1e-6) {
     res <- list()
+
+    ## get the knots
+    if (length(K) == 1 && is.numeric(K)) {
+        dist <- diff(range(x)) / (K + 1)
+        knots <- seq(min(x) - (deg * dist) - EPS, max(x) + (deg * dist) + EPS,
+                     len = K + 2 * (deg + 1))
+        names(knots) <- NULL
+        res$knots <- knots
+    } else if (is.vector(K) && is.numeric(K)) {
+        knots <- K
+        res$knots <- knots
+    } else {
+        stop("Supplied knots must a numeric vector.")
+    }
+    names(knots) <- NULL
+
     res$design <- splines::splineDesign(knots, x, ord = deg + 1)
     res$knots <- knots
     return(res)
@@ -306,6 +320,7 @@ get_design_tpf <- function(x, K, deg) {
 
     res <- list()
 
+    ## get the knots
     if (length(K) == 1 && is.numeric(K)) {
         knots <- quantile(unique(x), seq(0, 1, len = K + 2))[-c(1, K + 2)]
         names(knots) <- NULL
@@ -318,27 +333,30 @@ get_design_tpf <- function(x, K, deg) {
     }
     names(knots) <- NULL
 
+    ## get the design matrix
     splines <- outer(x, knots, `-`)
-    if (deg > 0 && deg < 3) {
-        splines <- splines^deg * (splines > 0)
-        res$design <- cbind(1, poly(x, degree = deg, raw = T, simple = TRUE),
-                            splines, deparse.level = 0)
-        colnames(res$design) <- NULL
+    if (deg == 1) {
+        splines <- splines * (splines > 0)
+        res$design <- cbind(1, x, splines, deparse.level = 0)
+    } else if (deg == 2) {
+        splines <- splines^2 * (splines > 0)
+        res$design <- cbind(1, x, x^2, splines, deparse.level = 0)
     } else {
         stop("Invalid degree.")
     }
+    colnames(res$design) <- NULL
 
-    ## if (deg == 1) {
-    ##     splines <- splines * (splines > 0)
-    ##     res$design <- cbind(1, x, splines, deparse.level = 0)
-    ## } else if (deg == 2) {
-    ##     splines <- splines^2 * (splines > 0)
-    ##     res$design <- cbind(1, x, x^2, splines, deparse.level = 0)
+    ## this chunck can be generalised to higher degree polynomials
+    ## if (deg > 0 && deg < 3) {
+    ##     splines <- splines^deg * (splines > 0)
+    ##     res$design <- cbind(1, poly(x, degree = deg, raw = T, simple = TRUE),
+    ##                         splines, deparse.level = 0)
+    ##     colnames(res$design) <- NULL
     ## } else {
     ##     stop("Invalid degree.")
     ## }
 
-    return(res)
+    res
 }
 
 ## Return the constraint matrix A, where Ax > 0.
