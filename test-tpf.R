@@ -1,4 +1,3 @@
-
 rm(list = ls())
 setwd("~/Dropbox/master/algo/")
 source("main-tpf.R")
@@ -261,7 +260,7 @@ growth20$grp.sub <- droplevels(growth20$grp.sub)
 
 set.seed(1)
 source("main-tpf.R")
-system.time(fm8 <- sub_tpf(growth10, 8, deg = 2, penalty = FALSE, shape = "increasing", size = 10000, burn = 0, verbose = T))
+system.time(fm8 <- sub_tpf(growth10, 8, deg = 2, penalty = TRUE, shape = "increasing", size = 10000, burn = 0, verbose = T))
 
 plot(fm8$samples$population[1, ])
 plot(fm8$samples$population[2, ])

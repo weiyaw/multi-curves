@@ -221,7 +221,7 @@ PriorLogFac <- function(n.terms, n.subject) {
 
 #' Construct a difference matrix
 #'
-#' \code{DiffMat} returns a difference matrix of an arbitrary order and size.
+#' \code{get_diff_mat} returns a difference matrix of an arbitrary order and size.
 #'
 #' This function returns a \eqn{k^{th}} order difference matrix \eqn{D}, such
 #' that \eqn{Dx} gives a vector of \eqn{k^{th}} order differences of \eqn{x}.
@@ -233,7 +233,7 @@ PriorLogFac <- function(n.terms, n.subject) {
 #'
 #' @return A \code{size - k} by \code{size} matrix.
 
-DiffMat <- function(size, k) {
+get_diff_mat <- function(size, k) {
     if (size <= k) {
         stop("Order of difference greater than column size.")
     }
@@ -244,7 +244,7 @@ DiffMat <- function(size, k) {
     if (k == 1) {
         return(D)
     } else {
-        return(DiffMat(size - 1, k - 1) %*% D)
+        return(get_diff_mat(size - 1, k - 1) %*% D)
     }
 }
 
@@ -335,26 +335,26 @@ get_design_tpf <- function(x, K, deg) {
 
     ## get the design matrix
     splines <- outer(x, knots, `-`)
-    if (deg == 1) {
-        splines <- splines * (splines > 0)
-        res$design <- cbind(1, x, splines, deparse.level = 0)
-    } else if (deg == 2) {
-        splines <- splines^2 * (splines > 0)
-        res$design <- cbind(1, x, x^2, splines, deparse.level = 0)
-    } else {
-        stop("Invalid degree.")
-    }
-    colnames(res$design) <- NULL
-
-    ## this chunck can be generalised to higher degree polynomials
-    ## if (deg > 0 && deg < 3) {
-    ##     splines <- splines^deg * (splines > 0)
-    ##     res$design <- cbind(1, poly(x, degree = deg, raw = T, simple = TRUE),
-    ##                         splines, deparse.level = 0)
-    ##     colnames(res$design) <- NULL
+    ## if (deg == 1) {
+    ##     splines <- splines * (splines > 0)
+    ##     res$design <- cbind(1, x, splines, deparse.level = 0)
+    ## } else if (deg == 2) {
+    ##     splines <- splines^2 * (splines > 0)
+    ##     res$design <- cbind(1, x, x^2, splines, deparse.level = 0)
     ## } else {
     ##     stop("Invalid degree.")
     ## }
+    ## colnames(res$design) <- NULL
+
+    ## this chunck can be generalised to higher degree polynomials
+    if (deg > 0 && deg < 3) {
+        splines <- splines^deg * (splines > 0)
+        res$design <- cbind(1, poly(x, degree = deg, raw = TRUE, simple = TRUE),
+                            splines, deparse.level = 0)
+        colnames(res$design) <- NULL
+    } else {
+        stop("Invalid degree.")
+    }
 
     res
 }

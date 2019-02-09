@@ -34,10 +34,10 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
 
     ## construct the design matrix and knots
     design_ls <- get_design_tpf(x, K, deg)
-    knots <- design_ls$knots            # all knots (with extrema)
-    n_spline <- length(knots) - 2       # number of inner knots (w/o extrema)
+    knots <- design_ls$knots            # all knots (with boundaries)
+    n_spline <- length(knots) - 2       # number of inner knots (w/o boundaries)
     X_pop <- design_ls$design
-
+    browser()
     ## get rid of the design_ls to save space
     rm(design_ls)
 
@@ -100,14 +100,15 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
                               list(kpred_sub), list(y), idx_poly, Kmat, 1,
                               n_subs, n_spline, n_samples)
 
-        ## no penalty on the population spline terms
+        ## No penalty on the population spline terms
         if (!penalty) {kprecs$pop <- 0}
 
         ## get the coefs and deviations
-        kcoefs <- get_coefs_hmc(kcoef_pop, kcoef_sub, kpred_sub, X_pop, X_pop_sq, X_sub_sq,
-                                lvl_sub, idx_sub, y, kprecs$eps, kprecs$pop,
-                                kprecs$poly, kprecs$sub, A, A_t, A_inv, Kmat,
-                                n_terms)
+        kcoefs <- get_coefs_hmc(kcoef_pop, kcoef_sub, kpred_sub,
+                                X_pop, X_pop_sq, X_sub_sq,
+                                lvl_sub, idx_sub, y,
+                                kprecs$eps, kprecs$pop, kprecs$poly, kprecs$sub,
+                                A, A_t, A_inv, Kmat, n_terms)
 
         ## for the ease of reading
         kcoef_pop <- kcoefs$coef_pop
@@ -612,7 +613,7 @@ get_cov_tpf <- function(coef_pop, coef_sub, pred_pop, pred_sub, y_pop,
     ig_a <- 0.001
     ig_b <- 0.001
     wi_df <- length(idx_poly)
-    wi_sig <- diag(0.001, length(idx_poly))
+    wi_sig <- diag(0.0011, length(idx_poly))
 
     ## if dealing with a single population model, convert everything to lists.
     if (typeof(coef_pop) == "list") coef_pop else list(coef_pop)

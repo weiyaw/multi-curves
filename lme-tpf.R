@@ -32,7 +32,7 @@ growth30 <- subset(growth,
 growth30$grp.sub <- droplevels(growth30$grp.sub)
 
 
-data <- growth10
+data <- growth10boys
 deg <- 2
 
 x <- data[[1]] ## / max(data[[1]])
@@ -56,31 +56,39 @@ m <- length(unique(grp))
 ## design matrices for the population curve
 source("~/Dropbox/master/algo/subor.R")
 des_ls_pop <- get_design_tpf(x, K_pop, deg)
-X_pop <- des_ls_pop$design[, 1:(deg + 1)]
+raw_pop <- des_ls_pop$design[, 1:(deg + 1)]
+G_pop <- solve(crossprod(raw_pop)) %*%
+    crossprod(raw_pop, cbind(1, poly(x, degree = deg, simple = TRUE)))
+X_pop <- raw_pop %*% G_pop
 Z_pop <- des_ls_pop$design[, (deg + 2):(deg + 1 + K_pop)]
 
 ## design matrices for subject-specific curves
 des_ls_sub <- get_design_tpf(x, K_sub, deg)
-X_sub <- des_ls_sub$design[, 1:(deg + 1)]
-Z_sub <- des_ls_sub$design[, (deg + 2):(deg + 1 + K_sub)]
+raw_sub <- des_ls_sub$design[, 1:(deg + 1)]
+G_sub <- G_pop
+X_sub <- raw_sub %*% G_sub
+sub_cols <- seq(deg + 2, deg + 1 + K_sub, 1) # which columns of Z_pop is used for Z_sub
+Z_sub <- des_ls_sub$design[, sub_cols]
 
+
+library(nlme)
 ## covariance structures of random effects
-pop_pd <- nlme::pdIdent(~ Z_pop - 1)
-sub_pd <- nlme::pdBlocked(list(nlme::pdSymm(~ X_sub - 1), nlme::pdIdent(~ Z_sub - 1)))
-## sub_pd <- nlme::pdIdent(~ 1)
+pop_pd <- pdDiag(~ Z_pop)
+## sub_pd <- pdBlocked(list(pdSymm(~ X_sub - 1), pdIdent(~ Z_sub - 1)))
+sub_pd <- pdBlocked(list(pdDiag(~ X_sub - 1), pdDiag(~ Z_sub - 1)))
 
-fm <- nlme::lme(fixed = y ~ X_pop + Z_pop - 1,
-                random = list(grp = sub_pd),
-                control = list(maxIter = 250, msMaxIter = 250, niterEM = 250,
-                               msVerbose = F, eval.max = 200))
-fm_struct <- fm$modelStruct$reStruct
-fm_cov <- lapply(as.matrix(fm_struct), function(x) {x * fm$sigma^2})
-sig2_eps <- fm$sigma^2
-sig2_u <- tail(diag(fm_cov$ones, names = FALSE), 1)
-sig2_eps / sig2_u
+## fm <- lme(fixed = y ~ X_pop - 1,
+##           random = list(ones = pop_pd, grp = sub_pd),
+##           control = list(maxIter = 250, msMaxIter = 250, niterEM = 250,
+##                          msVerbose = F, eval.max = 200))
+## fm_struct <- fm$modelStruct$reStruct
+## fm_cov <- lapply(as.matrix(fm_struct), function(x) {x * fm$sigma^2})
+## sig2_eps <- fm$sigma^2
+## sig2_u <- tail(diag(fm_cov$ones, names = FALSE), 1)
+## sig2_eps / sig2_u
 
 
-fm <- nlme::lme(fixed = y ~ X_pop - 1, random = list(ones = pop_pd))
+fm <- lme(fixed = y ~ X_pop - 1, random = list(ones = pop_pd))
 
 
 ## PLOT LME RESULTS
@@ -91,25 +99,31 @@ plot_x <- sort(unique(plot_x))
 ## design matrix corresponding to the range to plot
 des_plot_pop <- get_design_tpf(plot_x, des_ls_pop$knots, deg = deg)
 des_plot_sub <- get_design_tpf(plot_x, des_ls_sub$knots, deg = deg)
-C_mat <- cbind(des_plot_pop$design, des_plot_sub$design)
-plot_y_pop <- C_mat %*% c(as.numeric(coef(fm, level = 1)), rep(0, deg + 1 + K_sub))
+## C_mat <- cbind(des_plot_pop$design, des_plot_sub$design)
+C_mat <- cbind(des_plot_pop$design[, 1:(deg + 1)] %*% G_pop,
+               des_plot_pop$design[, (deg + 2):(deg + 1 + K_pop)],
+               des_plot_sub$design[, 1:(deg + 1)] %*% G_sub,
+               des_plot_sub$design[, sub_cols])
+
+plot_y_pop <- C_mat %*% c(as.numeric(coef(fm, level = 1)),
+                          rep(0, deg + 1 + length(sub_cols)))
 plot_y_sub <- C_mat %*% t(as.matrix(coef(fm, level = 2)))
-plot_y_pop <- C_mat %*% c(as.numeric(nlme::fixef(fm)), rep(0, deg + 1 + K_sub))
-plot_y_sub <- C_mat %*% t(as.matrix(coef(fm)))
+## plot_y_pop <- C_mat %*% c(as.numeric(nlme::fixef(fm)), rep(0, deg + 1 + K_sub))
+## plot_y_sub <- C_mat %*% t(as.matrix(coef(fm)))
 colnames(plot_y_sub) <- levels(grp)
 ## plot_y_pop <- des_plot_pop$design %*% as.numeric(coef(fm, level = 1))
 
-## ## plotting from stan_fit object
-## ## be careful of plot_x and plot_y
-fm_stan <- readRDS('~/Dropbox/master/stan/growth/no-penalty-full.rds')
-ch_no <- 2                              # which chain to choose
-betas <- get_posterior_mean(fm_stan)[1:3, ch_no]
-us <- get_posterior_mean(fm_stan)[4:(4+7), ch_no]
-bs <- matrix(get_posterior_mean(fm_stan)[(4+8):(4+8+m*3-1), ch_no], deg + 1)
-vs <- matrix(get_posterior_mean(fm_stan)[(4+8+m*3):(4+8+m*3+(m*8)-1), ch_no], K_sub)
-plot_y_pop <- C_mat %*% c(betas, us, rep(0, deg + 1 + K_sub))
-plot_y_sub <- C_mat %*% rbind(matrix(c(betas, us), deg + 1 + K_sub, m), rbind(bs, vs))
-colnames(plot_y_sub) <- levels(grp)
+## plotting from stan_fit object
+## be careful of plot_x and plot_y
+## fm_stan <- readRDS('~/Dropbox/master/stan/growth/no-penalty-full.rds')
+## ch_no <- 2                              # which chain to choose
+## betas <- get_posterior_mean(fm_stan)[1:3, ch_no]
+## us <- get_posterior_mean(fm_stan)[4:(4+7), ch_no]
+## bs <- matrix(get_posterior_mean(fm_stan)[(4+8):(4+8+m*3-1), ch_no], deg + 1)
+## vs <- matrix(get_posterior_mean(fm_stan)[(4+8+m*3):(4+8+m*3+(m*8)-1), ch_no], K_sub)
+## plot_y_pop <- C_mat %*% c(betas, us, rep(0, deg + 1 + K_sub))
+## plot_y_sub <- C_mat %*% rbind(matrix(c(betas, us), deg + 1 + K_sub, m), rbind(bs, vs))
+## colnames(plot_y_sub) <- levels(grp)
 
 ## construct suitable data frames for ggplot
 ori_dat <- data.frame(x = x, y = y, sub = grp)
@@ -137,7 +151,8 @@ for (i in seq(1, ceiling(length(sub_names) / num_pics))) {
         ## geom_point(aes(x = des_ls_sub$knots, y = rep(0, length(des_ls_sub$knots)),
         ##                col = NULL), col = 'blue', pch = 2) +
         labs(title = paste("pop:", K_pop, "; sub:", K_sub, "; deg:", deg,
-                           "; n:", length(levels(grp))))
+                           "; n:", length(levels(grp)))) +
+        theme(legend.position="none")
     print(ggobj)
 }
 
