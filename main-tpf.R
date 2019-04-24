@@ -5,7 +5,7 @@ source("subor.R")
 ## K : number of quantile (inner) knots, or a vector of inner knots
 ## deg : degree of spline polynomial
 sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size = 100,
-                    burn = size / 10, verbose = FALSE) {
+                    burn = size / 10, sampler = "gibbs", verbose = FALSE) {
 
     if (deg != 1 && deg != 2) {
         stop("Invalid spline degree. Must be 1 or 2.")
@@ -25,8 +25,8 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
         grp <- factor(data[[3]], levels = unique(data[[3]]))
     }
 
-    n_terms <- K + deg + 1
-    n_samples <- NROW(data)
+    n_terms <- K + deg + 1              # number of basis functions
+    n_samples <- NROW(data)             # number of samples
 
     lvl_sub <- levels(grp)
     idx_sub <- tapply(seq_len(n_samples), grp, function(x) x)
@@ -37,7 +37,7 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
     knots <- design_ls$knots            # all knots (with boundaries)
     n_spline <- length(knots) - 2       # number of inner knots (w/o boundaries)
     X_pop <- design_ls$design
-    browser()
+
     ## get rid of the design_ls to save space
     rm(design_ls)
 
@@ -49,15 +49,15 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
         X_sub_sq[, , j] <- crossprod(X_pop[idx_sub[[j]], ])
     }
 
-    ## An idempotent matrix to extract the spline terms
+    ## an idempotent matrix to extract the spline terms
     Kmat <- diag(c(rep(0, deg + 1), rep(1, n_spline)))
     idx_poly <- seq_len(deg + 1)        # index of polynomial terms
 
-    ## Construct the constraint matrix and its cross-product
+    ## construct the constraint matrix and its cross-product
     A <- get_constmat_tpf(knots, shape, deg)
     A_t <- t(A)
 
-    ## Calculate an inverse of A to easily produce feasible states
+    ## calculate an inverse of A to easily produce feasible states
     A_inv <- diag(NCOL(A))
     A_inv[row(A_inv) > diff(dim(A))] <- A
     A_inv <- solve(A_inv)
@@ -87,6 +87,7 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
     ## samples$precision: precisions (matrix) (num vec/mat list)
     ## pop: population coefs; poly: subject polynomial terms;
     ## sub: subject deviations; eps: error terms.
+    ## loglike_ls: log-likelihood
     samples$precision$pop <- rep(NA, size)
     samples$precision$poly <- array(NA, c(deg + 1, deg + 1, size))
     samples$precision$sub <- rep(NA, size)
@@ -103,12 +104,25 @@ sub_tpf <- function(data, K, deg = 1, penalty = TRUE, shape = "increasing", size
         ## No penalty on the population spline terms
         if (!penalty) {kprecs$pop <- 0}
 
+        DEBUG <- FALSE
+        if (FALSE) DEBUG <- TRUE
+        ## cat(k)
         ## get the coefs and deviations
-        kcoefs <- get_coefs_hmc(kcoef_pop, kcoef_sub, kpred_sub,
-                                X_pop, X_pop_sq, X_sub_sq,
-                                lvl_sub, idx_sub, y,
-                                kprecs$eps, kprecs$pop, kprecs$poly, kprecs$sub,
-                                A, A_t, A_inv, Kmat, n_terms)
+        if (sampler == "gibbs") {
+            kcoefs <- get_coefs_gibbs(kcoef_pop, kcoef_sub, kpred_sub,
+                                      X_pop, X_pop_sq, X_sub_sq,
+                                      lvl_sub, idx_sub, y,
+                                      kprecs$eps, kprecs$pop, kprecs$poly, kprecs$sub,
+                                      A, A_t, A_inv, Kmat, n_terms, DEBUG)
+        } else if (sampler == "hmc") {
+            kcoefs <- get_coefs_hmc(kcoef_pop, kcoef_sub, kpred_sub,
+                                    X_pop, X_pop_sq, X_sub_sq,
+                                    lvl_sub, idx_sub, y,
+                                    kprecs$eps, kprecs$pop, kprecs$poly, kprecs$sub,
+                                    A, A_t, A_inv, Kmat, n_terms, DEBUG)
+        } else {
+            stop("Unrecognised sampler.")
+        }
 
         ## for the ease of reading
         kcoef_pop <- kcoefs$coef_pop
@@ -304,9 +318,9 @@ multisub_tpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
         ##  ## pred_sub = pred_sub)
 
         ## } else {
-            kprecs <- get_cov_tpf(kcoef_pop, kcoef_sub, kpred_pop, kpred_sub,
-                                  y_pop, idx_poly, Kmat, n_pops, n_subs,
-                                  n_spline, n_samples)
+        kprecs <- get_cov_tpf(kcoef_pop, kcoef_sub, kpred_pop, kpred_sub,
+                              y_pop, idx_poly, Kmat, n_pops, n_subs,
+                              n_spline, n_samples)
         ## }
         if (k > 0) {
             ## store the precisions
@@ -320,9 +334,8 @@ multisub_tpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
         ## DEBUG
         ## if (k == 67) {DEBUG <- TRUE}
         ## if (k == 68) {DEBUG <- FALSE}
-        kcoefs <- mapply(get_coefs_tpf, kcoef_pop, kcoef_sub, kpred_sub, X_pop,
-                         X_pop_sq, X_sub_sq, lvl_sub, idx_sub,
-                         y_pop,
+        kcoefs <- mapply(get_coefs_gibbs, kcoef_pop, kcoef_sub, kpred_sub, X_pop,
+                         X_pop_sq, X_sub_sq, lvl_sub, idx_sub, y_pop,
                          MoreArgs = list(kprecs$eps, kprecs$pop,
                                          kprecs$poly, kprecs$sub, A,
                                          A_t, A_inv, Kmat, n_terms, DEBUG),
@@ -395,12 +408,12 @@ multisub_tpf <- function(data, K, deg = 1, shape = "increasing", size = 100,
 ## coef_sub: individual deviations (num mat)
 ## pred_pop: prediction contribution by the pop coefs (num vec)
 ## pred_sub: prediction contribution by the sub deviations (num vec)
-get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_sq,
-                          lvl_sub, idx_sub, y_pop,
-                          prc_eps, prc_pop, prc_poly, prc_sub, A,
-                          A_t, A_inv, Kmat, n_terms, DEBUG = FALSE) {
+get_coefs_gibbs <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_sq,
+                            lvl_sub, idx_sub, y_pop,
+                            prc_eps, prc_pop, prc_poly, prc_sub, A,
+                            A_t, A_inv, Kmat, n_terms, DEBUG = FALSE) {
 
-    M_pop <- solve(X_pop_sq + (prc_pop / prc_eps) * Kmat)
+    M_pop <- chol2inv(chol(X_pop_sq + (prc_pop / prc_eps) * Kmat))
     mu_pop <- tcrossprod(M_pop, X_pop) %*% (y_pop - pred_sub)
     sig_pop <- M_pop / prc_eps
 
@@ -414,7 +427,10 @@ get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
     coef_pop <- start_pop
     if (DEBUG) {browser()}
 
-    ## TRUNCATED NORMAL WITH BERWIN'S SAMPLER
+    ## unconstrained sampler
+    coef_pop <- t(mvtnorm::rmvnorm(1, mu_pop, sig_pop))
+
+    ## Berwin's constrained sampler
     ## coef_pop <- TruncatedNormal::rmvtgauss.lin(1, mu_pop, sig_pop,
     ##                                         Amat = A_t,
     ##                                         Avec = lower_pop,
@@ -423,33 +439,14 @@ get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
     ##                                         start = coef_pop,
     ##                                         burnin = 500)
 
-    ## ORDINARY NORMAL WITH BUILT IN SAMPLER
-    ## coef_pop <- t(mvtnorm::rmvnorm(1, mu_pop, sig_pop))
-
-    ## TRUNCATED NORMAL WITH MODIFIED HMC
-    coef_pop <- t(tnorm::rmvtnorm(1, mu_pop, sig_pop,
-                                F = A,
-                                g = -lower_pop,
-                                ## start = start_pop,
-                                ## burnin = 1000)
-                                initial = coef_pop,
-                                burn = 20))
-
-    ## tmp <- TruncatedNormal::rmvtgauss.lin(500, mu_pop, sig_pop,
-    ##                                         Amat = A_t,
-    ##                                         Avec = lower_pop,
-    ##                                         ## start = start_pop,
-    ##                                         ## burnin = 1000)
-    ##                                         start = coef_pop,
-    ##                                         burnin = 0)
-
-    ## tmp <- t(tnorm::rmvtnorm(500, mu_pop, sig_pop,
+    ## modified HMC constrained sampler
+    ## coef_pop <- t(tnorm::rmvtnorm(1, mu_pop, sig_pop,
     ##                             F = A,
     ##                             g = -lower_pop,
     ##                             ## start = start_pop,
     ##                             ## burnin = 1000)
     ##                             initial = coef_pop,
-    ##                             burn = 0))
+    ##                             burn = 20))
 
 
     ## Update prediction contribution by the population curve.
@@ -473,11 +470,14 @@ get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
 
     for (j in lvl_sub) {
         idx <- idx_sub[[j]]
-        M_sub <- solve(X_sub_sq[, , j] + half_N)
+        M_sub <- chol2inv(chol(X_sub_sq[, , j] + half_N))
         mu_sub <- tcrossprod(M_sub, X_pop[idx, ]) %*% y_diff_pop[idx]
         sig_sub <- M_sub / prc_eps
 
-        ## TRUNCATED NORMAL WITH BERWIN'S SAMPLER
+        ## unconstrained sampler
+        coef_sub[, j] <- mvtnorm::rmvnorm(1, mu_sub, sig_sub)
+
+        ## Berwin's constrained sampler
         ## tmp <- TruncatedNormal::rmvtgauss.lin(500, mu_sub, sig_sub,
         ##                                       Amat = A_t,
         ##                                       Avec = lower_sub,
@@ -486,25 +486,24 @@ get_coefs_tpf <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
         ##                                       start = coef_sub[, j],
         ##                                       burnin = 0)
 
-        ## ORDINARY NORMAL WITH BUILT IN SAMPLER
-        ## coef_sub[, j] <- mvtnorm::rmvnorm(1, mu_sub, sig_sub)
-
-        ## TRUNCATED NORMAL WITH MODIFIED HMC
-        coef_sub[, j] <- tnorm::rmvtnorm(1, mu_sub, sig_sub,
-                                         F = A,
-                                         g = -lower_sub,
-                                         ## start = zeros,
-                                         ## burnin = 1000)
-                                         initial = coef_sub[, j],
-                                         burn = 20)
+        ## modified HMC constrained sampler
+        ## coef_sub[, j] <- tnorm::rmvtnorm(1, mu_sub, sig_sub,
+        ##                                  F = A,
+        ##                                  g = -lower_sub,
+        ##                                  ## start = zeros,
+        ##                                  ## burnin = 1000)
+        ##                                  initial = coef_sub[, j],
+        ##                                  burn = 20)
 
 
         ## Update prediction contribution by subject curves
         pred_sub[idx] <- X_pop[idx, ] %*% coef_sub[, j]
     }
 
+    ## loglike <- mvtnorm::dmvnorm(t(coefs), mu, sig, log = TRUE)
+
     list(coef_pop = coef_pop, coef_sub = coef_sub, pred_pop = pred_pop,
-         pred_sub = pred_sub)
+         pred_sub = pred_sub, loglike = NA)
 }
 
 ## HMC version of get_coefs
@@ -540,24 +539,31 @@ get_coefs_hmc <- function(coef_pop, coef_sub, pred_sub, X_pop, X_pop_sq, X_sub_s
         coefs <- c(coef_pop, coef_sub)
     }
 
+    if (DEBUG) browser()
+
     ## calculate "posterior" mean and variance
-    M <- solve(crossprod(C) + D_inv)
+    M <- chol2inv(chol(crossprod(C) + D_inv))
     mu <- tcrossprod(M, C) %*% y_pop
     sig <- M / prc_eps
+    sig <- 0.5 * (t(sig) + sig)         # symmetrisize for numerical stability
 
-    ## TRUNCATED NORMAL WITH MODIFIED HMC
 
+    ## unconstrained sampler
+    coefs <- t(mvtnorm::rmvnorm(1, mu, sig))
+
+    ## modified HMC unconstrained sampler
     ## coefs <- t(tnorm::rmvtnorm(1, mu, sig, F = NULL, g = NULL,
     ##                           ## start = start_pop,
     ##                           ## burnin = 1000)
     ##                           initial = coefs,
-    ##                           burn = 20))
+    ##                           burn = 100))
 
-    coefs <- t(tnorm::rmvtnorm(1, mu, sig, F = A_big, g = -lower,
-                              ## start = start_pop,
-                              ## burnin = 1000)
-                              initial = coefs,
-                              burn = 20))
+    ## modified HMC constrained sampler
+    ## coefs <- t(tnorm::rmvtnorm(1, mu, sig, F = A_big, g = -lower,
+    ##                           ## start = start_pop,
+    ##                           ## burnin = 1000)
+    ##                           initial = coefs,
+    ##                           burn = 20))
 
     coef_pop <- coefs[1:n_terms]
     coef_sub <- matrix(coefs[-(1:n_terms)], n_terms, length(lvl_sub),
@@ -612,8 +618,8 @@ get_cov_tpf <- function(coef_pop, coef_sub, pred_pop, pred_sub, y_pop,
     ## hyperparameters of priors
     ig_a <- 0.001
     ig_b <- 0.001
-    wi_df <- length(idx_poly)
-    wi_sig <- diag(0.0011, length(idx_poly))
+    wi_df <- length(idx_poly) + 1
+    wi_sig <- diag(1, length(idx_poly))
 
     ## if dealing with a single population model, convert everything to lists.
     if (typeof(coef_pop) == "list") coef_pop else list(coef_pop)
@@ -629,11 +635,6 @@ get_cov_tpf <- function(coef_pop, coef_sub, pred_pop, pred_sub, y_pop,
     shp_pop <- (n_pops * n_spline) / 2 + ig_a
     scl_pop <- 0.5 * xspl_pop + ig_b
     prc_pop <- rgamma(1, shape = shp_pop, rate = scl_pop)
-
-    ## precision of individual spline terms
-    shp_sub <- (sum(n_subs) * n_spline) / 2 + ig_a
-    scl_sub <- 0.5 * xspl_sub + ig_b
-    prc_sub <- rgamma(1, shape = shp_sub, rate = scl_sub)
 
     ## precision of residuals
     resid_vec <- mapply(function(x, y, z) x - y - z,
@@ -654,8 +655,14 @@ get_cov_tpf <- function(coef_pop, coef_sub, pred_pop, pred_sub, y_pop,
 
     ## precision of individual polynomial terms
     df_poly <- wi_df + sum(n_subs)
-    Sigma_poly <- solve(wi_sig + rowSums(txpoly, dims = 2))
+    Sigma_poly <- chol2inv(chol(wi_sig + rowSums(txpoly, dims = 2)))
     prc_poly <- rWishart(1, df = df_poly, Sigma = Sigma_poly)[, , 1]
+
+    ## precision of individual spline terms
+    shp_sub <- (sum(n_subs) * n_spline) / 2 + ig_a
+    scl_sub <- 0.5 * xspl_sub + ig_b
+    if (scl_sub < 0.00001) {scl_sub <- 1}
+    prc_sub <- rgamma(1, shape = shp_sub, rate = scl_sub)
 
     list(pop = prc_pop, sub = prc_sub, poly = prc_poly, eps = prc_eps)
 }
@@ -706,66 +713,4 @@ lme_tpf <- function(data, K, deg = 1) {
     list(means = means, samples = NULL, basis = basis, info = info,
          data = data, model = fm)
 }
-
-
-## Fit a penalised spline with nlme. A random effect is added to each population
-## coefficient. Different knots on population and subject-specific levels.
-## data : 1st col x, 2nd col y, 3rd col groups
-## K_pop : number of quantile (inner) knots
-## K_sub : number of quantile (inner) knots
-## deg : degree of spline polynomial
-lme_tpf <- function(data, K, deg = 1) {
-    x <- data[[1]]
-    y <- data[[2]]
-
-    ## convert the group variable into a factor
-    if (is.factor(data[[3]])) {
-        grp <- droplevels(data[[3]])
-    } else {
-        grp <- factor(data[[3]], levels = unique(data[[3]]))
-    }
-
-    ## dummy variable of ones
-    ones <- rep(1, length(grp))
-
-    ## design matrices for the population curve
-    design_ls <- get_design_tpf(x, K, deg)
-    X <- design_ls$design[, 1:(deg + 1)]
-    Z <- design_ls$design[, (deg + 2):(deg + 1 + K)]
-
-    ## covariance structures of random effects
-    pop_pd <- nlme::pdIdent(~ Z - 1)
-    sub_pd <- nlme::pdBlocked(list(nlme::pdSymm(~ X - 1), nlme::pdIdent(~ Z - 1)))
-
-    fm <- nlme::lme(fixed = y ~ X - 1, random = list(ones = pop_pd, grp = sub_pd),
-                    control = list(maxIter = 50, msMaxIter = 150, niterEM = 150))
-
-    ## extract coefficients
-    pop_coef <- as.numeric(coef(fm, level = 1))
-    sub_coef <- t(as.matrix(coef(fm, level = 2))) - pop_coef
-    colnames(sub_coef) <- levels(grp)
-    rownames(sub_coef) <- NULL
-
-    means <- list(population = pop_coef, subjects = sub_coef)
-    basis <- list(type = "tpf", knots = design_ls$knots, degree = deg)
-    info <- list(lvl_pop = NULL, lvl_sub = levels(grp), n_terms = deg + 1 + K)
-    data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
-
-    list(means = means, samples = NULL, basis = basis, info = info,
-         data = data, model = fm)
-}
-
-
-
-
-
-
-## fit_
-##     pop_pd <- nlme::pdIdent(~ Z.q - 1)
-##     ## sub.pd.q <- pdBlocked(list(pdSymm(~ time.q + I(time.q^2)), pdIdent(~ Z.q - 1)))
-##     ## sub.pd.q <- pdSymm(~ time.q + I(time.q^2))
-##     sub_pd <- pdBlocked(list(pdSymm(~ 1), pdIdent(~ Z.q - 1)))
-##     quad_fm <- lme(fixed = y ~ time.q + I(time.q^2),
-##                    random = list(pop.level = pop.pd.q, sub.level = sub.pd.q))
-
 

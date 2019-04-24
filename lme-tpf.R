@@ -57,25 +57,25 @@ m <- length(unique(grp))
 source("~/Dropbox/master/algo/subor.R")
 des_ls_pop <- get_design_tpf(x, K_pop, deg)
 raw_pop <- des_ls_pop$design[, 1:(deg + 1)]
-G_pop <- solve(crossprod(raw_pop)) %*%
-    crossprod(raw_pop, cbind(1, poly(x, degree = deg, simple = TRUE)))
-X_pop <- raw_pop %*% G_pop
+## G_pop <- solve(crossprod(raw_pop)) %*%
+##     crossprod(raw_pop, cbind(1, poly(x, degree = deg, simple = TRUE)))
+X_pop <- raw_pop # %*% G_pop
 Z_pop <- des_ls_pop$design[, (deg + 2):(deg + 1 + K_pop)]
 
 ## design matrices for subject-specific curves
 des_ls_sub <- get_design_tpf(x, K_sub, deg)
 raw_sub <- des_ls_sub$design[, 1:(deg + 1)]
-G_sub <- G_pop
-X_sub <- raw_sub %*% G_sub
+## G_sub <- G_pop
+X_sub <- raw_sub # %*% G_sub
 sub_cols <- seq(deg + 2, deg + 1 + K_sub, 1) # which columns of Z_pop is used for Z_sub
 Z_sub <- des_ls_sub$design[, sub_cols]
 
 
 library(nlme)
 ## covariance structures of random effects
-pop_pd <- pdDiag(~ Z_pop)
-## sub_pd <- pdBlocked(list(pdSymm(~ X_sub - 1), pdIdent(~ Z_sub - 1)))
-sub_pd <- pdBlocked(list(pdDiag(~ X_sub - 1), pdDiag(~ Z_sub - 1)))
+pop_pd <- pdIdent(~ Z_pop - 1)
+sub_pd <- pdBlocked(list(pdSymm(~ X_sub - 1), pdIdent(~ Z_sub - 1)))
+## sub_pd <- pdBlocked(list(pdDiag(~ X_sub - 1), pdDiag(~ Z_sub - 1)))
 
 ## fm <- lme(fixed = y ~ X_pop - 1,
 ##           random = list(ones = pop_pd, grp = sub_pd),
@@ -88,7 +88,7 @@ sub_pd <- pdBlocked(list(pdDiag(~ X_sub - 1), pdDiag(~ Z_sub - 1)))
 ## sig2_eps / sig2_u
 
 
-fm <- lme(fixed = y ~ X_pop - 1, random = list(ones = pop_pd))
+fm <- lme(fixed = y ~ X_pop - 1, random = list(ones = pop_pd, grp = sub_pd))
 
 
 ## PLOT LME RESULTS
@@ -100,9 +100,9 @@ plot_x <- sort(unique(plot_x))
 des_plot_pop <- get_design_tpf(plot_x, des_ls_pop$knots, deg = deg)
 des_plot_sub <- get_design_tpf(plot_x, des_ls_sub$knots, deg = deg)
 ## C_mat <- cbind(des_plot_pop$design, des_plot_sub$design)
-C_mat <- cbind(des_plot_pop$design[, 1:(deg + 1)] %*% G_pop,
+C_mat <- cbind(des_plot_pop$design[, 1:(deg + 1)], # %*% G_pop,
                des_plot_pop$design[, (deg + 2):(deg + 1 + K_pop)],
-               des_plot_sub$design[, 1:(deg + 1)] %*% G_sub,
+               des_plot_sub$design[, 1:(deg + 1)], # %*% G_sub,
                des_plot_sub$design[, sub_cols])
 
 plot_y_pop <- C_mat %*% c(as.numeric(coef(fm, level = 1)),

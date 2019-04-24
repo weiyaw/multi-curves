@@ -1,7 +1,5 @@
 ##### B SPLINES #####
 
-library(TruncatedNormal)
-## library(nlme)
 library(microbenchmark)
 rm(list = ls())
 setwd("~/Gdrive/master/algo/")
@@ -104,4 +102,70 @@ pop.pd.q <- pdIdent(~ Z.q - 1)
 sub.pd.q <- pdBlocked(list(pdSymm(~ 1), pdIdent(~ Z.q - 1)))
 quad.fm <- lme(fixed = y ~ time.q + I(time.q^2),
                random = list(pop.level = pop.pd.q, sub.level = sub.pd.q))
+
+
+
+#### BERKELY GROWTH DATASET ####
+rm(list = ls())
+growth <- reshape2::melt(fda::growth[-3])
+growth <- with(growth, data.frame(x = Var1 / max(Var1), y = value / max(value), grp.sub = Var2, grp.pop = L1))
+growth10 <- subset(growth,
+                   grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
+                                  "girl01", "girl02", "girl03", "girl04", "girl05"),
+                   drop = TRUE)
+growth10$grp.sub <- droplevels(growth10$grp.sub)
+
+growth10boys <- subset(growth,
+                       grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
+                                      "boy06", "boy07", "boy08", "boy09", "boy10"),
+                   drop = TRUE)
+growth10boys$grp.sub <- droplevels(growth10boys$grp.sub)
+
+data <- growth10boys
+deg <- 2
+data[, 1:2] <- apply(data[, 1:2], 2, function(x) x / max(x))
+
+set.seed(1)
+## set.seed(2)
+source("main-bs.R")
+system.time(fm8 <- sub_bs(data, 8, deg = 2, shape = "increasing", size = 10000, burn = 0, sampler = "gibbs", verbose = T))
+
+plot(fm8$samples$population[1, ])
+plot(fm8$samples$population[2, ])
+plot(fm8$samples$population[3, ])
+plot(fm8$samples$population[4, ])
+plot(fm8$samples$population[5, ])
+plot(fm8$samples$population[6, ])
+plot(fm8$samples$population[7, ])
+plot(fm8$samples$population[8, ])
+plot(fm8$samples$population[9, ])
+plot(fm8$samples$population[10, ])
+plot(fm8$samples$population[11, ])
+
+plot(fm8$samples$subjects[1, 1, ])
+plot(fm8$samples$subjects[2, 1, ])
+plot(fm8$samples$subjects[3, 1, ])
+plot(fm8$samples$subjects[4, 1, ])
+plot(fm8$samples$subjects[5, 1, ])
+plot(fm8$samples$subjects[6, 1, ])
+plot(fm8$samples$subjects[7, 1, ])
+plot(fm8$samples$subjects[8, 1, ])
+plot(fm8$samples$subjects[9, 1, ])
+plot(fm8$samples$subjects[10, 1, ])
+plot(fm8$samples$subjects[11, 1, ])
+
+plot(1 / fm8$samples$precision$pop)
+plot(1 / fm8$samples$precision$sub)
+plot(fm8$samples$precision$eps)
+
+source("graphs.R")
+plot_spline(fm8, mle = F)
+plot_spline(fm9, mle = T)
+plot_spline(truncate_spline(fm8, 5000))
+plot_spline(truncate_spline(fm9, 5000))
+
+
+
+
+
 

@@ -1,4 +1,5 @@
 source("./subor.R")
+stop("don't use this. use subor.R instead.")
 
 #' Plot the means of linear spline models.
 #'
@@ -356,17 +357,22 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     } else if (type == "bs") {
         model_mat <- splines::splineDesign(knots, plot_x, ord = deg + 1,
                                            outer.ok = TRUE)
+    } else if (type == "bs_hier") {
+        model_mat <- splines::splineDesign(knots, plot_x, ord = deg + 1,
+                                           outer.ok = TRUE)
+        model_mat <- model_mat %*% model$basis$trans_mat
     } else {
         stop("Unknown type of model.")
     }
 
     if (mle) {
+        ## Extract the mle (posterior mode)
+        coef_pop <- model$mle$population
+        dev_sub <- model$mle$subjects
+    } else {
         ## Extract the posterior means
         coef_pop <- model$means$population
         dev_sub <- model$means$subjects
-    } else {
-        coef_pop <- model$mle$population
-        dev_sub <- model$mle$subjects
     }
 
     ## Helper function to calculate the y axis of the plot
@@ -408,10 +414,18 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     ## plot_data_pop <- reshape2::melt(plot_y_pop, varnames = c("idx", "sub"),
     ##                                 as.is = TRUE, value.name = "y")
 
-    ols_y <- get_ols(data$y[data$pop == plot_which[1]],
-                     get_design_tpf(data$x[data$pop == plot_which[1]], knots, deg)$design)
-    ols <- data.frame(x = plot_x,
-                      y = get_plot_y(ols_y))
+
+    ## if (type == "tpf") {
+    ## ols_y <- get_ols(data$y[data$pop == plot_which[1]],
+    ##                  get_design_tpf(data$x[data$pop == plot_which[1]], knots, deg)$design)
+    ## } else if (type == "bs") {
+    ## ols_y <- get_ols(data$y[data$pop == plot_which[1]],
+    ##                  get_design_bs(data$x[data$pop == plot_which[1]], knots, deg)$design)
+    ## } else {
+    ##     stop("Unknown type of model.")
+    ## }
+    ## ols <- data.frame(x = plot_x,
+    ##                   y = get_plot_y(ols_y))
     aes <- ggplot2::aes
     geom_point <- ggplot2::geom_point
     geom_line <- ggplot2::geom_line
@@ -423,7 +437,7 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
             geom_line(aes(group = sub), data = plotdat_sub[[i]]) + # subject-specific curves
             geom_line(aes(col = NULL), data = plotdat_pop[[i]])    # population curve
         ## + geom_line(aes(col = NULL), data = ols, col = 'red')
-        print(ggobj)
+        print(ggobj + theme_bw() + theme(legend.position="none"))
     }
 
     ## This is a reassurance step (reorder group levels)

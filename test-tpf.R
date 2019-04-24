@@ -247,6 +247,13 @@ growth10 <- subset(growth,
                    drop = TRUE)
 growth10$grp.sub <- droplevels(growth10$grp.sub)
 
+growth10boys <- subset(growth,
+                       grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
+                                      "boy06", "boy07", "boy08", "boy09", "boy10"),
+                   drop = TRUE)
+growth10boys$grp.sub <- droplevels(growth10boys$grp.sub)
+
+
 growth20 <- subset(growth,
                    grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
                                   "girl01", "girl02", "girl03", "girl04", "girl05",
@@ -255,12 +262,12 @@ growth20 <- subset(growth,
                    drop = TRUE)
 growth20$grp.sub <- droplevels(growth20$grp.sub)
 
+data <- growth10boys
+data[, 1:2] <- apply(data[, 1:2], 2, function(x) x / max(x))
 
-
-
-set.seed(1)
+set.seed(2)
 source("main-tpf.R")
-system.time(fm8 <- sub_tpf(growth10, 8, deg = 2, penalty = TRUE, shape = "increasing", size = 10000, burn = 0, verbose = T))
+system.time(fm8 <- sub_tpf(data, 8, deg = 2, penalty = TRUE, shape = "increasing", size = 10000, burn = 0, verbose = T))
 
 plot(fm8$samples$population[1, ])
 plot(fm8$samples$population[2, ])
@@ -286,18 +293,18 @@ plot(fm8$samples$subjects[9, 1, ])
 plot(fm8$samples$subjects[10, 1, ])
 plot(fm8$samples$subjects[11, 1, ])
 
-plot(1 / fm8$samples$precision$pop)
-plot(1 / fm8$samples$precision$sub)
-plot(fm8$samples$precision$eps)
+acf(1 / fm8$samples$precision$pop)
+acf(1 / fm8$samples$precision$sub)
+acf(fm8$samples$precision$eps)
 
 source("graphs.R")
-plot_spline(fm8, mle = T)
+plot_spline(fm8, mle = F)
 plot_spline(truncate_spline(fm8, 5000))
 
 
 set.seed(2)
 source("main-tpf.R")
-system.time(fm9 <- sub_tpf(growth10, 8, deg = 2, penalty = FALSE, shape = "increasing", size = 10000, burn = 0, verbose = T))
+system.time(fm9 <- sub_tpf(growth10boys, 8, deg = 2, penalty = TRUE, shape = "increasing", size = 1, burn = 0, verbose = T))
 
 plot(fm9$samples$population[1, ])
 plot(fm9$samples$population[2, ])
@@ -323,7 +330,7 @@ hist(fm9$samples$subjects[9, 10, ])
 hist(fm9$samples$subjects[10, 10, ])
 hist(fm9$samples$subjects[11, 10, ])
 
-plot(1 / fm9$samples$precision$pop)
+plot(fm9$samples$precision$pop)
 plot(1 / fm9$samples$precision$sub)
 plot(fm9$samples$precision$eps)
 
