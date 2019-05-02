@@ -1,4 +1,3 @@
-
 MultiVarCov <- function(restruct, resid.var = NA) {
 
     ## Return a list of variance-covariance matrices from a "reStruct" object.
@@ -54,169 +53,6 @@ DiagMat <- function(A, size = NA) {
    } else {
        warning("Non-matrix or list object supplied")
    }
-}
-
-VecToMat <- function(vec, n, colwise = TRUE) {
-
-    ## Create a matrix with identical columns (or rows)
-
-    if (colwise) {
-        matrix(rep(vec, times = n), ncol = n, nrow = length(vec))
-    } else {
-        matrix(rep(vec, times = n), nrow = n, ncol = length(vec), byrow = TRUE)
-    }
-}
-
-NormKernel <- function(x, mu, inv.sigma, log = TRUE) {
-    ## Kernel of a normal distribution
-
-    if (is.matrix(inv.sigma)) {
-        res <- -0.5 * (t(x - mu) %*% inv.sigma %*% (x - mu))
-    } else if (is.numeric(inv.sigma) && length(inv.sigma) == 1) {
-        res <- -0.5 * (crossprod(x - mu) * inv.sigma)
-    } else {
-        stop("Invalid inverse var-cov matrix")
-    }
-
-    if (log) {
-        res
-    } else {
-        exp(res)
-    }
-}
-
-ProposalLogFac <- function(mu, G, n.subject, n.terms) {
-    ## Logarithm of independent normal proposal ratio
-    ## G is the varcov matrix supplied in rmvtgauss.lin
-    ## mu is the EBLUPS estimate
-    ## n.subject is the number of subjects
-
-    if (NROW(G) != NCOL(G)) {
-        stop("G is not a square matrix!")
-    }
-    if (n.terms != (NROW(G) / (n.subject + 1))) {
-        stop("Number of terms disagree with dimension of G")
-    }
-    terms.idx <- seq(1, n.terms)
-
-    ## Calculate list of precision matrix and mean vector
-    idx.list <- list()
-    P.list <- list()
-    mu.list <- list()
-    for (i in seq(1, n.subject + 1)) {
-        idx <- (i - 1) * n.terms + terms.idx
-        idx.list[[i]] <- idx
-        P.list[[i]] <- solve(G[idx, idx, drop = FALSE])
-        mu.list[[i]] <- mu[idx]
-    }
-    rm(list = setdiff(ls(), c("idx.list", "P.list", "mu.list")))
-
-    function(zeta) {
-        res <- 0
-        for (i in seq_along(mu.list)) {
-            idx <- idx.list[[i]]
-            mu <- mu.list[[i]]
-            P <- P.list[[i]]
-            res <- res + NormKernel(zeta[idx], mu, P, TRUE)
-        }
-        return(res)
-    }
-}
-
-## cand <- rmvtgauss.lin(5, crude.zeta, crude.varcov, Amat = t(A), Avec = rep(0, NROW(A)))
-## prop <- ProposalLogFac(crude.zeta, crude.varcov, n.subject, n.terms)
-## mu <- environment(prop)$mu.list
-## P <- environment(prop)$P.list
-## prop(cand[,1]) - prop(cand[,2])
-## dmvnorm(cand[,1], crude.zeta, crude.varcov, TRUE) -
-##     dmvnorm(cand[,2], crude.zeta, crude.varcov, TRUE)
-
-LikelihoodLogFac <- function(y, model.mat, n.terms, n.per.sub) {
-    ## model.mat is the model matrix with linear terms preceding splines terms.
-
-    n <- sum(n.per.sub)
-    n.subject <- length(n.per.sub)
-
-    if (!(is.vector(n.per.sub) || is.array(n.per.sub))) {
-        stop("Incorrect format of n.per.sub.")
-    }
-    if (NROW(model.mat) != n) {
-        stop("Rows of model matrix mismatch with n.per.sub.")
-    }
-    if (NCOL(model.mat) != n.terms) {
-        stop("Columns of model matrix mismatch with n.terms.")
-    }
-
-    idx.end <- cumsum(n.per.sub)
-    idx <- list()
-
-    for (i in seq_along(n.per.sub)) {
-        idx[[i]] <- seq(to = idx.end[i], len = n.per.sub[i])
-    }
-
-    rm(list = setdiff(ls(), c("y", "model.mat", "n.terms", "n.subject", "idx")))
-
-    function(zeta, eps.prec) {
-        reg.coef <- VecToMat(zeta[1:n.terms], n.subject) +
-            matrix(zeta[-(1:n.terms)], n.terms, n.subject)
-        y.predict <- rep(NA, n)
-
-        for (i in seq(1, n.subject)) {
-            y.predict[idx[[i]]] <- model.mat[idx[[i]], ] %*% reg.coef[, i]
-        }
-        ## return(y.predict)
-        return(NormKernel(y, y.predict, eps.prec))
-    }
-}
-
-## Seems correct?
-## likelihood <- with(sitka, LikelihoodLogFac(y, cbind(X, Z), n.terms, n.per.sub))
-## likelihood(cand[, 1], 1 / fit1$sigma^2)
-## likelihood(cand[, 2], 1 / fit1$sigma^2)
-## NormKernel(y, predict(fit2), 1 / fit1$sigma^2)
-
-## library(ggplot2)
-## ggplot() +
-##     geom_line(aes(scal.time, y, group = id.num), sitka) +
-##     geom_line(aes(scal.time, predict(fit1), group = id.num), sitka, col = 'blue') +
-##     geom_line(aes(scal.time, likelihood(cand[, 1], 1 / fit1$sigma^2), group = id.num), sitka, col = 'red') +
-##     geom_line(aes(scal.time, likelihood(cand[, 2], 1 / fit1$sigma^2), group = id.num), sitka, col = 'green')
-
-
-PriorLogFac <- function(n.terms, n.subject) {
-
-    zeta.dim <- n.terms * (n.subject + 1)
-    idx <- matrix(seq(1, zeta.dim), n.terms, n.subject + 1)
-    beta.idx <- idx[1:2, 1]
-    u.idx <- idx[-(1:2), 1]
-    b.idx <- idx[1:2, -1, drop = FALSE]
-    v.idx <- c(idx[-(1:2), -1])
-
-    rm(list = setdiff(ls(), c("beta.idx", "u.idx", "b.idx", "v.idx",
-                              "zeta.dim")))
-
-    function(zeta, u.prec, v.prec, b.prec) {
-        if (length(zeta) != zeta.dim) {
-            stop("Length of zeta mismatch with n.terms and n.subject. ")
-        }
-
-        ## beta (standard normal prior)
-        res <- NormKernel(zeta[beta.idx], 0, 1)
-
-        ## u (truncated normal)
-        res <- res + NormKernel(zeta[u.idx], 0, u.prec)
-
-        ## b (truncated normal)
-        for (i in seq(1, n.subject)) {
-            res <- res + NormKernel(zeta[b.idx[, i]], 0, b.prec)
-        }
-
-        ## v (truncated normal)
-        res <- res + NormKernel(zeta[v.idx], 0, v.prec)
-
-        return(res)
-
-    }
 }
 
 #' Construct a difference matrix
@@ -445,6 +281,12 @@ get_ols <- function(response, design) {
 }
 
 
+################################################################
+##########################            ##########################
+##########################    PLOT    ##########################
+##########################            ##########################
+################################################################
+
 ## Plot multiple lines
 ## Requires: model$basis$knots (including extrema), model$basis$type,
 ##   model$basis$degree, model$info$lvl_pop, model$data, model$mean
@@ -536,9 +378,7 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     plotdat_sub <- list()
     for (i in plot_which) {
         plotdat_pop[[i]] <- data.frame(x = plot_x, y = plot_y_pop[[i]])
-        plotdat_sub[[i]] <- reshape2::melt(plot_y_sub[[i]],
-                                           varnames = c("x", "sub"),
-                                           as.is = TRUE, value.name = "y")
+        plotdat_sub[[i]] <- tidyr::gather(tibble::as.tibble(plot_y_sub[[i]]), sub, y)
         plotdat_sub[[i]]$x <- plot_x
     }
     aes <- ggplot2::aes
@@ -575,220 +415,14 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     ##                             col = "red", shape = 4)
 }
 
-## convert an array of precision matrices to covariance matrices
-prec_to_cov <- function(prec) {
-    size <- dim(prec)[3]
-    for (i in 1:size) {
-        prec[, , i] <- chol2inv(chol(prec[, , i]))
-    }
-    prec
-}
-
-## return a vector of parameter names
-para_names <- function(fm) {
-    population <- fm$samples$population
-    subjects <- fm$samples$subjects
-    precision <- fm$samples$precision
-
-    n_theta <- NROW(population)
-    n_subs <- dim(subjects)[2]
-    n_delta <- dim(subjects)[1]
-    dim_sub1 <- NCOL(precision$sub1)
-
-    theta_names <- rep(NA, n_theta)
-    for (i in 1:n_theta) {
-        theta_names[i] <- paste0("theta[", i, "]")
-    }
-    delta_names <- matrix(NA, n_delta, n_subs)
-    for (i in 1:n_subs) {
-        for (j in 1:n_delta) {
-            delta_names[j, i] <- paste0("delta[", j, ",", i, "]")
-        }
-    }
-    cov_names <- matrix(NA, dim_sub1, dim_sub1)
-    for (i in 1:dim_sub1) {
-        for (j in 1:dim_sub1) {
-            cov_names[j, i] <- paste0("cov_delta1[", j, ",", i, "]")
-        }
-    }
-    sig2_names <- c("sig2_theta", "sig2_delta2", "sig2_eps")
-    c(theta_names, delta_names, cov_names, sig2_names)
-}
-
-## return a vector of statistics calculated from "fun"
-## eg. sweep_posterior(fm, sd), sweep_posterior(fm, mean)
-sweep_posterior <- function(fm, fun) {
-    population <- fm$samples$population
-    subjects <- fm$samples$subjects
-    precision <- fm$samples$precision
-
-    n_subs <- dim(subjects)[2]
-    n_delta <- dim(subjects)[1]
-    dim_sub1 <- NCOL(precision$sub1)
-
-    stat_pop <- apply(population, 1, fun)
-    stat_sub <- matrix(NA, n_delta, n_subs, dimnames = list(NULL, levels(grp)))
-    for (i in levels(grp)) {
-        stat_sub[, i] <- apply(subjects[, i, ], 1, fun)
-    }
-    stat_cov_pop <- fun(1 / precision$pop)
-    stat_cov_sub1 <- matrix(NA, dim_sub1, dim_sub1)
-    cov_sub1 <- prec_to_cov(precision$sub1)
-    for (i in 1:dim_sub1) {
-        stat_cov_sub1[, i] <- apply(cov_sub1[, i, ], 1, fun)
-    }
-    stat_cov_sub2 <- fun(1 / precision$sub2)
-    stat_cov_eps <- fun(1 /precision$eps)
-    stat_all <- c(stat_pop, stat_sub, stat_cov_sub1, stat_cov_pop,
-                  stat_cov_sub2, stat_cov_eps)
-    names(stat_all) <- para_names(fm)
-    stat_all
-}
-
-## split Markov chains (from Aki)
-## sims: a 2D array of samples (# iter * # chains)
-split_chains <- function(sims) {
-    if (is.vector(sims)) {
-        dim(sims) <- c(length(sims), 1)
-    }
-    niter <- dim(sims)[1]
-    half <- niter / 2
-    cbind(sims[1:floor(half), ], sims[ceiling(half + 1):niter, ])
-}
-
-#' Traditional Rhat convergence diagnostic
-#'
-#' Compute the Rhat convergence diagnostic for a single parameter
-#' For split-Rhat, call this with split chains.
-#'
-#' @param sims A 2D array _without_ warmup samples (# iter * # chains).
-#'
-#' @return A single numeric value for Rhat.
-#'
-#' @references
-#' Aki Vehtari, Andrew Gelman, Daniel Simpson, Bob Carpenter, and
-#' Paul-Christian Bürkner (2019). Rank-normalization, folding, and
-#' localization: An improved R-hat for assessing convergence of
-#' MCMC. \emph{arXiv preprint} \code{arXiv:1903.08008}.
-rhat_rfun <- function(sims) {
-    if (is.vector(sims)) {
-        dim(sims) <- c(length(sims), 1)
-    }
-    chains <- ncol(sims)
-    n_samples <- nrow(sims)
-    chain_mean <- numeric(chains)
-    chain_var <- numeric(chains)
-    for (i in seq_len(chains)) {
-        chain_mean[i] <- mean(sims[, i])
-        chain_var[i] <- var(sims[, i])
-    }
-    var_between <- n_samples * var(chain_mean)
-    var_within <- mean(chain_var)
-    sqrt((var_between / var_within + n_samples - 1) / n_samples)
-}
 
 
-## takes fms and compute rhat for every parameters
-rhats <- function(...) {
-    flats <- flatten_chains(...)
-    hats <- rep(NA, dim(flats)[3])
-    names(hats) <- dimnames(flats)[[3]]
 
-    for (i in names(hats)) {
-        hats[i] <- rhat_rfun(flats[, , i])
-    }
-    hats
-}
 
-## convert fm$samples into a matrix of n_samples * n_parameters
-flatten_chain <- function(fm) {
-    n_terms <- NROW(fm$samples$population)
-    n_subs <- dim(fm$samples$subjects)[2]
-    dim_sub1 <- dim(fm$samples$precision$sub1)[2]
-    size <- NCOL(fm$samples$population)
-    ## order: pop, sub, cov_sub2, sig2_pop, sig2_sub2, sig2_eps
-    para <- para_names(fm)
-    flat <- matrix(NA, size, length(para), dimnames = list(NULL, para))
 
-    flat[, grep("^theta", para)] <- t(fm$samples$population)
-    dim(fm$samples$subject) <- c(n_terms * n_subs, size)
-    flat[, grep("^delta", para)] <- t(fm$samples$subject)
-    dim(fm$samples$precision$sub1) <- c(dim_sub1^2, size)
-    flat[, grep("^cov_delta1", para)] <- t(fm$samples$precision$sub1)
-    flat[, grep("sig2_theta", para)] <- fm$samples$precision$pop
-    flat[, grep("sig2_delta2", para)] <- fm$samples$precision$sub2
-    flat[, grep("sig2_eps", para)] <- fm$samples$precision$eps
 
-    flat
-}
 
-## flatten multiple fms$samples into an array of n_samples * n_chain * n_parameters
-## for Rhat calculation
-flatten_chains <- function(...) {
-    fms <- list(...)
-    n_chains <- length(fms)
-    size <- NCOL(fms[[1]]$samples$population)
-    ## order: pop, sub, cov_sub2, sig2_pop, sig2_sub2, sig2_eps
-    para <- para_names(fms[[1]])
-    flats <- array(NA, c(size, n_chains, length(para)),
-                        dimnames = list(NULL, NULL, para))
-    for (i in 1:n_chains) {
-        flats[, i, ] <- flatten_chain(fms[[i]])
-    }
-    flats
-}
 
-## combine multiple fms into one fm
-combine_fm <- function(...) {
-    fms <- list(...)
-    n_chains <- length(fms)
-    n_terms <- NROW(fms[[1]]$samples$population)
-    n_subs <- dim(fms[[1]]$samples$subjects)[2]
-    dim_sub1 <- dim(fms[[1]]$samples$precision$sub1)[2]
-    ind_size <- rep(NA, n_chains)
-    for (i in 1:n_chains) {
-        ind_size[i] <- NCOL(fms[[i]]$samples$population)
-    }
-    size <- sum(ind_size)
-    start_idx <- c(0, cumsum(ind_size)[-n_chains]) + 1
-    end_idx <- cumsum(ind_size)
-    samples <- list(population = matrix(NA, n_terms, size),
-                    subjects = array(NA, c(n_terms, n_subs, size),
-                                     dimnames = list(NULL, levels(grp))),
-                    precision = list(pop = rep(NA, size),
-                                     sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
-                                     sub2 = rep(NA, size),
-                                     eps = rep(NA, size)))
-    for (i in 1:n_chains) {
-        idx <- seq(start_idx[i], end_idx[i])
-        samples$population[, idx] <- fms[[i]]$samples$population
-        samples$subjects[, , idx] <- fms[[i]]$samples$subjects
-        samples$precision$pop[idx] <- fms[[i]]$samples$precision$pop
-        samples$precision$sub1[, , idx] <- fms[[i]]$samples$precision$sub1
-        samples$precision$sub2[idx] <- fms[[i]]$samples$precision$sub2
-        samples$precision$eps[idx] <- fms[[i]]$samples$precision$eps
-    }
-    means <- list(population = rowMeans(samples$population),
-                  subjects = rowMeans(samples$subjects, dims = 2))
-    list(means = means, samples = samples)
-}
-
-## return a summary statistics for posterior
-summary_matrix <- function(...) {
-    combined <- combine_fm(...)
-    quan025 <- function(x) quantile(x, 0.025, names = FALSE)
-    quan500 <- function(x) quantile(x, 0.5, names = FALSE)
-    quan975 <- function(x) quantile(x, 0.975, names = FALSE)
-
-    tibble::tibble(Parameter = para_names(combined),
-                   Rhat = rhats(...),
-                   n_eff = sweep_posterior(combined, mcmcse::ess),
-                   mean = sweep_posterior(combined, mean),
-                   sd = sweep_posterior(combined, sd),
-                   "2.5%" = sweep_posterior(combined, quan025),
-                   "50%" = sweep_posterior(combined, quan500),
-                   "97.5%" = sweep_posterior(combined, quan975))
-}
 
 
 
