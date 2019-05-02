@@ -1,39 +1,19 @@
 rm(list = ls())
 setwd("~/Dropbox/master/algo")
 source("main-ridge.R")
-growth <- reshape2::melt(fda::growth[-3])
-growth <- with(growth, data.frame(x = Var1, y = value, grp.sub = Var2, grp.pop = L1))
-growth10 <- subset(growth,
-                   grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
-                                  "girl01", "girl02", "girl03", "girl04", "girl05"),
-                   drop = TRUE)
-growth10$grp.sub <- droplevels(growth10$grp.sub)
+library(tidyverse)
 
-growth10boys <- subset(growth,
-                       grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
-                                      "boy06", "boy07", "boy08", "boy09", "boy10"),
-                   drop = TRUE)
-growth10boys$grp.sub <- droplevels(growth10boys$grp.sub)
+sitka10 <- read_table2("~/Dropbox/master/algo/data/sitka.txt") %>%
+    filter(id.num >= 1 & id.num <= 10) %>%
+    mutate(id.num = as.factor(id.num)) %>%
+    select(days, log.size, id.num)
 
-growth20 <- subset(growth,
-                   grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
-                                  "boy06", "boy07", "boy08", "boy09", "boy10",
-                                  "girl01", "girl02", "girl03", "girl04", "girl05",
-                                  "girl06", "girl07", "girl08", "girl09", "girl10"),
-                   drop = TRUE)
-growth20$grp.sub <- droplevels(growth20$grp.sub)
-
-growth30 <- subset(growth,
-                   grp.sub %in% c("boy01", "boy02", "boy03", "boy04", "boy05",
-                                  "boy06", "boy07", "boy08", "boy09", "boy10",
-                                  "boy11", "boy12", "boy13", "boy14", "boy15",
-                                  "girl01", "girl02", "girl03", "girl04", "girl05",
-                                  "girl06", "girl07", "girl08", "girl09", "girl10",
-                                  "girl11", "girl12", "girl13", "girl14", "girl15"),
-                   drop = TRUE)
-growth30$grp.sub <- droplevels(growth30$grp.sub)
-
-growthboys <- subset(growth, grp.pop == "hgtm", drop = TRUE)
+growth10boys <- fda::growth[-3] %>%
+    map_dfc(function(x) as.tibble(x, rownames = "age")) %>%
+    gather(sub, height, -age, -age1) %>%
+    filter(grepl("^boy0[1-9]|^boy10", sub)) %>%
+    mutate(age = as.numeric(age), sub = as.factor(sub)) %>%
+    select(age, height, sub)
 
 data <- growth10boys
 deg <- 2
@@ -59,7 +39,7 @@ source("~/Dropbox/master/algo/subor.R")
 n_bsf <- K + deg + 1                # number of b-spline basis functions
 D <- get_diff_mat(n_bsf, deg + 1)       # difference matrix
 des_ls_pop <- get_design_bs(x, K, deg)
-G_pop <- cbind(1, poly(1:n_bsf, deg = deg, raw = T, simple = T))
+G_pop <- cbind(1, poly(1:n_bsf, deg = deg, raw = FALSE, simple = TRUE))
 H_pop <- crossprod(D, solve(tcrossprod(D)))
 B_pop <- des_ls_pop$design %*% cbind(G_pop, H_pop)
 K_mat <- cbind(matrix(0, K, deg + 1), diag(K))
@@ -70,20 +50,39 @@ fm1 <- bayes_ridge(y, cbind(X_pop, Z_pop), K_mat, 0, 10000)
 
 source("main-ridge.R")
 set.seed(24)
-system.time(fm2_1 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 10000))
-system.time(fm2_2 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 10000))
+system.time(fm2_1 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 0, 1000))
+system.time(fm2_2 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 5000))
+system.time(fm2_3 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 5000))
+system.time(fm2_4 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 5000))
 fm2_2$basis <- list(type = 'bs_hier', knots = des_ls_pop$knots, degree = deg,
                     trans_mat = cbind(G_pop, H_pop))
 fm2_2$data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
-source("graphs.R")
+source("subor.R")
 plot_spline(fm2_2)
 
-plot(mcmc(1 / fm2_2$samples$precision$sub2))
-plot(mcmc(1 / fm2_1$samples$precision$sub2))
-gelman.diag(mcmc.list(mcmc(1 / fm2_1$samples$precision$sub2), mcmc(1 / fm2_2$samples$precision$sub2)))
-gelman.plot(mcmc.list(mcmc(1 / fm2_1$samples$precision$sub2), mcmc(1 / fm2_2$samples$precision$sub2)))
-effectiveSize(mcmc(1 / fm2_2$samples$precision$sub2))
-effectiveSize(mcmc(fm2_2$samples$population[1, ]))
+plot(fm2$samples$precision$pop)
+acf(fm2$samples$precision$pop)
+source("diagnostic.R")
+ess_rfun(flatten_chains(fm2_1, fm2_2)[, , "sig2_delta2"])
+
+source("main-ridge.R")
+A_mat <- get_constmat_bs(NCOL(B_pop), "increasing") %*% cbind(G_pop, H_pop)
+set.seed(2)
+fm2c <- bayes_ridge_cons_sub(y, grp, B_pop, K_mat, deg + 1, A_mat, 0, 5000)
+fm2c$basis <- list(type = 'bs_hier', knots = des_ls_pop$knots, degree = deg,
+                    trans_mat = cbind(G_pop, H_pop))
+fm2c$data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
+plot_spline(fm2c)
+plot(fm2c$samples$population[1, ])
+
+source("main-mc.R")
+lower <- rep(0, NROW(A_mat))
+fm2cmc <- mc_cons_sub(y, grp, B_pop, K_mat, A_mat, lower, fm2_1$samples$prec, 1000)
+fm2cmc <- mc_cons_sub(y, grp, B_pop, K_mat, A_mat, lower, fm2_1$samples$prec, 1000)
+fm2cmc$basis <- list(type = 'bs_hier', knots = des_ls_pop$knots, degree = deg,
+                     trans_mat = cbind(G_pop, H_pop))
+fm2cmc$data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
+plot_spline(fm2cmc)
 
 source("main-mc.R")
 set.seed(21)
@@ -122,11 +121,19 @@ fm4$data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
 source("graphs.R")
 plot_spline(truncate_spline(fm4, 400))
 
-plot(fm4$samples$precision$eps)
-plot(fm4$samples$precision$pop)
-plot(fm4$samples$precision$sub2)
-plot(fm4$samples$population[1, 900:1000])
-plot(fm4$samples$population[2, 900:1000])
+source("main-ridge.R")
+A_mat <- get_constmat_bs(NCOL(B_pop), "increasing")
+set.seed(2)
+fm4c <- bayes_ridge_cons_sub(y, grp, B_pop, K_mat, deg + 1, A_mat, 0, 10000)
+fm4c$basis <- list(type = 'bs', knots = des_ls_pop$knots, degree = deg)
+fm4c$data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
+plot_spline(fm4c)
+plot(fm4c$samples$population[2, ], ylim = c(-2.15, -2.3))
+plot(fm4c$samples$precision$pop)
+plot(fm4c$samples$precision$sub1[1, 1, ])
+plot(fm4c$samples$precision$sub2)
+
+
 
 source("main-mc.R")
 set.seed(21)
@@ -140,6 +147,7 @@ fm_stan <- readRDS("../stan/growth/bs-ridge.rds")
 shinystan::launch_shinystan(fm_stan)
 
 ## design matrices for the population curve (tpf)
+deg <- 2
 des_ls_pop <- get_design_tpf(x, K, deg)
 B_pop <- des_ls_pop$design
 K_mat <- cbind(matrix(0, K, deg + 1), diag(K))
@@ -159,9 +167,19 @@ fm6$basis <- list(type = 'tpf', knots = des_ls_pop$knots, degree = deg)
 fm6$data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
 source("graphs.R")
 plot_spline(fm6)
-plot(fm6$samples$population[1, ])
-plot(1 / fm6$samples$precision$pop, type = 'l')
-sd(1 / fm6$samples$precision$sub2)
+
+source("main-ridge.R")
+A_mat <- get_constmat_tpf(des_ls_pop$knots, "increasing", deg)
+set.seed(2)
+fm6c <- bayes_ridge_cons_sub(y, grp, B_pop, K_mat, deg + 1, A_mat, 0, 5000)
+plot(fm6c$samples$population[1, ])
+plot(fm6c$samples$population[2, ])
+plot(fm6c$samples$subjects[1, 1, ])
+plot(1 / fm6c$samples$precision$pop, type = 'l')
+plot(1 / fm6c$samples$precision$sub2)
+fm6c$basis <- list(type = 'tpf', knots = des_ls_pop$knots, degree = deg)
+fm6c$data <- data.frame(x = x, y = y, grp_sub = grp, grp_pop = NA)
+plot_spline(fm6c)
 
 
 source("main-mc.R")
