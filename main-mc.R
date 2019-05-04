@@ -45,15 +45,24 @@ block_diag <- function(..., size = NULL) {
 
 
 ## This is a MC sampler that takes precision samples and gives coefs
+## The size of coefs equals to the size of prec
 ## Requirements: Bmat, y, grp, Kmat, prec
-## Algorithms paremeters: burn, size
+## Algorithms paremeters: burn
 ## Extras: verbose
-mc_sub <- function(y, grp, Bmat, Kmat, prec, size, verbose = TRUE) {
+mc_sub <- function(y, grp, Bmat, Kmat, prec, verbose = TRUE) {
     prec_pop <- prec$pop
     prec_sub1 <- prec$sub1
     prec_sub2 <- prec$sub2
     prec_eps <- prec$eps
 
+    ## clean up grp variable
+    if (is.factor(grp)) {
+        grp <- droplevels(grp)
+    } else {
+        grp <- factor(grp, levels = unique(grp))
+    }
+
+    size <- length(prec_pop)
     n_terms <- NCOL(Bmat)
     n_samples <- NROW(Bmat)
     n_subs <- length(unique(grp))
@@ -85,8 +94,8 @@ mc_sub <- function(y, grp, Bmat, Kmat, prec, size, verbose = TRUE) {
     kcoef_sub <- matrix(NA, n_terms, n_subs, dimnames = list(NULL, levels(grp)))
 
     ## get indices of the resamped variances
-    resampling_idx <- sample.int(length(prec_pop), size, TRUE)
-    ## resampling_idx <- (1+100):(size + 100)
+    ## resampling_idx <- sample.int(length(prec_pop), size, TRUE)
+    resampling_idx <- 1:size
 
     for (k in 1:size) {
 
@@ -94,8 +103,12 @@ mc_sub <- function(y, grp, Bmat, Kmat, prec, size, verbose = TRUE) {
         r <- resampling_idx[k]
         kprec_pop <- prec_pop[r]
         kprec_eps <- prec_eps[r]
-        kprec_sub <- diag(prec_sub2[r], n_terms)
-        kprec_sub[1:dim_sub1, 1:dim_sub1] <- prec_sub1[, , r]
+        kprec_sub1 <- prec_sub1[, , r]
+        kprec_sub2 <- prec_sub2[r]
+        kprec_sub <- block_diag(kprec_sub1, diag(kprec_sub2, n_terms - dim_sub1))
+
+        ## kprec_sub <- diag(prec_sub2[r], n_terms)
+        ## kprec_sub[1:dim_sub1, 1:dim_sub1] <- prec_sub1[, , r]
 
         ## get theta
         for (i in levels(grp)) {
@@ -103,10 +116,12 @@ mc_sub <- function(y, grp, Bmat, Kmat, prec, size, verbose = TRUE) {
             xBmat_i <- xBmat_sub[, , i]
             Li <- xBmat_i + kprec_sub / kprec_eps
             inv_Li <- chol2inv(chol(Li))
-            BMB[, , i] <- kprec_eps * xBmat_i - xBmat_i %*% inv_Li %*% xBmat_i
+            BMB[, , i] <- kprec_eps * (diag(n_terms) - xBmat_i %*% inv_Li) %*% xBmat_i
+            ## BMB[, , i] <- kprec_eps * xBmat_i - xBmat_i %*% inv_Li %*% xBmat_i
 
             Bxy_i <- Bxy_sub[, i]
-            BMy[, i] <- kprec_eps * Bxy_i - xBmat_i %*% inv_Li %*% Bxy_i
+            BMy[, i] <- kprec_eps * (Bxy_i - xBmat_i %*% inv_Li %*% Bxy_i)
+            ## BMy[, i] <- kprec_eps * Bxy_i - xBmat_i %*% inv_Li %*% Bxy_i
         }
         Phi <- kprec_pop * xKmat + rowSums(BMB, dims = 2)
         inv_Phi <- chol2inv(chol(Phi))
@@ -144,8 +159,9 @@ mc_sub <- function(y, grp, Bmat, Kmat, prec, size, verbose = TRUE) {
 
 ## This is a MC sampler that takes precision samples and gives constrained coefs
 ## A * theta >= lower ; A * (theta + delta_i) >= lower
+## The size of coefs equals to the size of prec
 ## Requirements: Bmat, y, grp, Kmat, Amat, prec
-## Algorithms paremeters: burn, size
+## Algorithms paremeters: burn
 ## Extras: verbose
 mc_cons_sub <- function(y, grp, Bmat, Kmat, Amat, lower, prec, size,
                         verbose = TRUE) {
@@ -154,6 +170,14 @@ mc_cons_sub <- function(y, grp, Bmat, Kmat, Amat, lower, prec, size,
     prec_sub2 <- prec$sub2
     prec_eps <- prec$eps
 
+    ## clean up grp variable
+    if (is.factor(grp)) {
+        grp <- droplevels(grp)
+    } else {
+        grp <- factor(grp, levels = unique(grp))
+    }
+
+    size <- length(prec_pop)
     n_terms <- NCOL(Bmat)
     n_samples <- NROW(Bmat)
     n_subs <- length(unique(grp))
@@ -197,7 +221,7 @@ mc_cons_sub <- function(y, grp, Bmat, Kmat, Amat, lower, prec, size,
 
     ## get indices of the resamped variances
     ## resampling_idx <- sample.int(length(prec_pop), size, TRUE)
-    resampling_idx <- rep(1:length(prec_pop), length.out = size)
+    resampling_idx <- 1:size
 
     for (k in 1:size) {
 
