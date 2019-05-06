@@ -389,7 +389,7 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_p
 ## Algorithms paremeters: burn, size
 ## Extras: verbose
 bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
-                                 start_pop = NULL, verbose = TRUE) {
+                                 init = NULL, verbose = TRUE) {
 
     ## hyperparemeters for priors
     ig_a_pop <- 0.001
@@ -449,16 +449,23 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
                                      eps = rep(NA, size)))
 
     ## initialise theta and delta with tnorms with small sd
-    if (is.null(start_pop)) {
+    if (is.null(init)) {
         kcoef_pop <- Ainv %*% rep(1, ncol(Amat))
+        kcoef_sub <- t(tnorm::rmvtnorm(n_subs, kcoef_pop, diag(n_terms) * 0.01,
+                                       initial = gen_init(-Amat %*% kcoef_pop, kcoef_pop),
+                                       F = Amat,
+                                       g = Amat %*% kcoef_pop))
+        colnames(kcoef_sub) <- levels(grp)
+
     } else {
-        kcoef_pop <- as.vector(start_pop)
+        if (length(init$pop) == n_terms && dim(init$sub) == c(n_terms, n_subs)) {
+            kcoef_pop <- as.vector(init$pop)
+            kcoef_sub <- as.matrix(init$sub)
+            colnames(kcoef_sub) <- levels(grp)
+        } else {
+            stop("Invalid initial values.")
+        }
     }
-    kcoef_sub <- t(tnorm::rmvtnorm(n_subs, kcoef_pop, diag(n_terms) * 0.01,
-                                   initial = gen_init(-Amat %*% kcoef_pop, kcoef_pop),
-                                   F = Amat,
-                                   g = Amat %*% kcoef_pop))
-    colnames(kcoef_sub) <- levels(grp)
 
     ## initialise prediction contribution by population coefs and subjects deviations
     kcontrib_pop <- Bmat %*% kcoef_pop
@@ -546,4 +553,174 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
     list(means = means, samples = samples)
 }
 
+
+## This is a Gibbs sampler for constrained longitudinal Bayesian ridge, with an
+## HMC step to generate pop and sub coefs; see thesis.
+## A * theta >= 0 ; A * (theta + delta_i) >= 0
+## The vector of constriant has to be zero.
+## Assumption: Full row rank for Amat.
+## Requirements: Bmat, y, grp, Kmat, dim_sub1, Amat
+## Algorithms paremeters: burn, size
+## Extras: verbose
+bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
+                                    size, init = NULL, verbose = TRUE) {
+
+    ## hyperparemeters for priors
+    ig_a_pop <- 0.001
+    ig_b_pop <- 0.001
+    ig_a_sub1 <- 0.001
+    ig_b_sub1 <- 0.001
+    ig_a_sub2 <- 0.001
+    ig_b_sub2 <- 0.001
+    ig_a_eps <- 0.001
+    ig_b_eps <- 0.001
+    omega_1 <- diag(dim_sub1)              # positive definite
+    omega_2 <- diag(NCOL(Bmat) - dim_sub1) # positive definite
+
+    if (NCOL(Amat) != NCOL(Bmat)) {
+        stop("Dims of Amat and Bmat inconsistent.")
+    }
+
+    ## clean up grp variable
+    if (is.factor(grp)) {
+        grp <- droplevels(grp)
+    } else {
+        grp <- factor(grp, levels = unique(grp))
+    }
+
+    ## some precalculation
+    rank_K <- NROW(Kmat)
+    n_terms <- NCOL(Bmat)
+    n_samples <- NROW(Bmat)
+    n_subs <- length(unique(grp))
+    idx <- tapply(seq_len(n_samples), grp, function(x) x, simplify = FALSE)
+    inv_omega_1 <- chol2inv(chol(omega_1))
+    inv_omega_2 <- chol2inv(chol(omega_2))
+
+    ## some crossproducts precalculation
+    ## xBmat <- crossprod(Bmat)
+    ## xBmat_sub <- array(NA, c(n_terms, n_terms, n_subs), list(NULL, NULL, levels(grp)))
+    ## for (i in levels(grp)) {
+    ##     xBmat_sub[, , i] <- crossprod(Bmat[idx[[i]], ])
+    ## }
+
+    ## construct full constraint matrix
+    fAmat_left <- t(matrix(t(Amat), NCOL(Amat), NROW(Amat) * (n_subs + 1)))
+    fAmat_topright <- matrix(0, NROW(Amat), n_terms * n_subs)
+    fAmat_btmright <- block_diag(Amat, size = n_subs)
+    fAmat <- cbind(fAmat_left, rbind(fAmat_topright, fAmat_btmright))
+    flower <- rep(lower, n_subs + 1)
+
+    ## generate an initial value for the hmc sampler
+    if (is.null(init)) {
+        Ainv <- diag(NCOL(Amat))
+        Ainv[row(Ainv) > diff(dim(Amat))] <- Amat
+        fAinv_left <- t(matrix(t(Ainv), NCOL(Ainv), NROW(Ainv) * (n_subs + 1)))
+        fAinv_topright <- matrix(0, NROW(Ainv), n_terms * n_subs)
+        fAinv_btmright <- block_diag(Ainv, size = n_subs)
+        fAinv <- cbind(fAinv_left, rbind(fAinv_topright, fAinv_btmright))
+        fAinv <- solve(fAinv)
+        kcoef <- fAinv %*% rep(c(rep(3, diff(dim(Amat))), lower + 1), n_subs + 1)
+    } else {
+        if (length(init$pop) == n_terms && dim(init$sub) == c(n_terms, n_subs)) {
+            kcoef <- c(init$pop, init$sub)
+        } else {
+            stop("Invalid initial values.")
+        }
+    }
+
+    ## construct full design matrix
+    fBmat_right <- do.call(block_diag, lapply(idx, function(x) Bmat[x, ]))
+    fBmat <- cbind(Bmat, fBmat_right)
+
+    ## some crossproducts precalculation
+    xfBmat <- crossprod(fBmat)
+    fBxy <- crossprod(fBmat, y)
+    xKmat <- crossprod(Kmat)
+
+    ## initialise the output list
+    samples <- list(population = matrix(NA, n_terms, size),
+                    subjects = array(NA, c(n_terms, n_subs, size),
+                                     dimnames = list(NULL, levels(grp))),
+                    precision = list(pop = rep(NA, size),
+                                     sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
+                                     sub2 = rep(NA, size),
+                                     eps = rep(NA, size)))
+
+    kcoef_pop <- kcoef[1:n_terms]
+    kcoef_sub <- matrix(kcoef[-(1:n_terms)], n_terms, n_subs,
+                        dimnames = list(NULL, levels(grp)))
+
+    ## initialise prediction contribution by population coefs and subjects deviations
+    kcontrib_pop <- Bmat %*% kcoef_pop
+    kcontrib_sub <- rep(NA, n_samples)
+    for (i in levels(grp)) {
+        kcontrib_sub[idx[[i]]] <- Bmat[idx[[i]], ] %*% kcoef_sub[, i]
+    }
+
+    for (k in seq.int(-burn + 1, size)) {
+
+        ## update sigma^2_theta
+        shape_pop <- 0.5 * rank_K + ig_a_pop
+        rate_pop <- 0.5 * crossprod(Kmat %*% kcoef_pop) + ig_b_pop
+        kprec_pop <- rgamma(1, shape = shape_pop, rate = rate_pop)
+
+        ## update sigma^2_epsilon
+        shape_eps <- 0.5 * n_samples + ig_a_eps
+        rate_eps <- 0.5 * crossprod(y - kcontrib_pop - kcontrib_sub) + ig_b_eps
+        kprec_eps <- rgamma(1, shape = shape_eps, rate = rate_eps)
+
+        ## update sigma^2_dev1
+        shape_sub1 <- 0.5 * n_subs * dim_sub1 + ig_a_sub1
+        quad_b_omega <- apply(kcoef_sub[1:dim_sub1, ], 2,
+                              function(x) crossprod(x, inv_omega_1 %*% x))
+        rate_sub1 <- 0.5 * sum(quad_b_omega) + ig_b_sub1
+        kprec_sub1 <- rgamma(1, shape = shape_sub1, rate = rate_sub1)
+
+        ## update sigma^2_dev2
+        shape_sub2 <- 0.5 * n_subs * (n_terms - dim_sub1) + ig_a_sub2
+        quad_v_omega <- apply(kcoef_sub[-(1:dim_sub1), ], 2,
+                              function(x) crossprod(x, inv_omega_2 %*% x))
+        rate_sub2 <- 0.5 * sum(quad_v_omega) + ig_b_sub2
+        kprec_sub2 <- rgamma(1, shape = shape_sub2, rate = rate_sub2)
+
+        ## construct Sigma
+        kprec_sub <- block_diag(kprec_sub1 * inv_omega_1, kprec_sub2 * inv_omega_2)
+        kprec <- block_diag(kprec_sub, size = n_subs + 1)
+        kprec[1:n_terms, 1:n_terms] <- kprec_pop * xKmat
+
+        ## update theta and delta
+        M <- chol2inv(chol(xfBmat + kprec / kprec_eps))
+        mu <- M %*% fBxy
+        sig <- 1 / kprec_eps * M
+        kcoef <- t(tnorm::rmvtnorm(1, mu, sig, kcoef, fAmat, -flower))
+        ## kcoef <- t(mvtnorm::rmvnorm(1, mu, sig))  # no problem in unconstrained case
+        kcoef_pop <- kcoef[1:n_terms]
+        kcoef_sub <- matrix(kcoef[-(1:n_terms)], n_terms, n_subs,
+                            dimnames = list(NULL, levels(grp)))
+        kcontrib_pop <- Bmat %*% kcoef_pop
+        for (i in levels(grp)) {
+            kcontrib_sub[idx[[i]]] <- Bmat[idx[[i]], ] %*% kcoef_sub[, i]
+        }
+
+        ## print progress
+        if (verbose && (k %% 1000 == 0)) {
+            cat(k, " samples generated.\n")
+        }
+
+        ## store samples after burn-in iterations
+        if (k > 0) {
+            samples$precision$pop[k] <- kprec_pop
+            samples$precision$sub1[, , k] <- kprec_sub1 * inv_omega_1
+            samples$precision$sub2[k] <- kprec_sub2
+            samples$precision$eps[k] <- kprec_eps
+            samples$population[, k] <- kcoef_pop
+            samples$subjects[, , k] <- kcoef_sub
+        }
+    }
+
+    means <- list(population = rowMeans(samples$population),
+                  subjects = rowMeans(samples$subjects, dims = 2))
+    list(means = means, samples = samples)
+}
 

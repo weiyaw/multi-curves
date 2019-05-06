@@ -107,9 +107,6 @@ mc_sub <- function(y, grp, Bmat, Kmat, prec, verbose = TRUE) {
         kprec_sub2 <- prec_sub2[r]
         kprec_sub <- block_diag(kprec_sub1, diag(kprec_sub2, n_terms - dim_sub1))
 
-        ## kprec_sub <- diag(prec_sub2[r], n_terms)
-        ## kprec_sub[1:dim_sub1, 1:dim_sub1] <- prec_sub1[, , r]
-
         ## get theta
         for (i in levels(grp)) {
             ## for numerical stability, these steps are simplified
@@ -163,8 +160,7 @@ mc_sub <- function(y, grp, Bmat, Kmat, prec, verbose = TRUE) {
 ## Requirements: Bmat, y, grp, Kmat, Amat, prec
 ## Algorithms paremeters: burn
 ## Extras: verbose
-mc_cons_sub <- function(y, grp, Bmat, Kmat, Amat, lower, prec, size,
-                        verbose = TRUE) {
+mc_cons_sub <- function(y, grp, Bmat, Kmat, Amat, lower, prec, verbose = TRUE) {
     prec_pop <- prec$pop
     prec_sub1 <- prec$sub1
     prec_sub2 <- prec$sub2
@@ -209,6 +205,7 @@ mc_cons_sub <- function(y, grp, Bmat, Kmat, Amat, lower, prec, size,
     ## some crossproducts precalculation
     xfBmat <- crossprod(fBmat)
     fBxy <- crossprod(fBmat, y)
+    xKmat <- crossprod(Kmat)
 
     ## initialise the output list
     samples <- list(population = matrix(NA, n_terms, size),
@@ -231,7 +228,7 @@ mc_cons_sub <- function(y, grp, Bmat, Kmat, Amat, lower, prec, size,
         kprec_eps <- prec_eps[r]
         kprec_sub <- block_diag(prec_sub1[, , r], diag(prec_sub2[r], n_knots))
         kprec <- block_diag(kprec_sub, size = n_subs + 1)
-        kprec[1:n_terms, 1:n_terms] <- diag(kprec_pop, n_terms)
+        kprec[1:n_terms, 1:n_terms] <- kprec_pop * xKmat
 
         ## get theta and delta
         M <- chol2inv(chol(xfBmat + kprec / kprec_eps))
