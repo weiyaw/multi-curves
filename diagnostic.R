@@ -67,7 +67,7 @@ combine_fm <- function(...) {
     end_idx <- cumsum(ind_size)
     samples <- list(population = matrix(NA, n_terms, size),
                     subjects = array(NA, c(n_terms, n_subs, size),
-                                     dimnames = list(NULL, levels(grp))),
+                                     dimnames = dimnames(fms[[1]]$samples$subjects)),
                     precision = list(pop = rep(NA, size),
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
@@ -147,8 +147,8 @@ sweep_posterior <- function(fm, fun) {
     dim_sub1 <- NCOL(precision$sub1)
 
     stat_pop <- apply(population, 1, fun)
-    stat_sub <- matrix(NA, n_delta, n_subs, dimnames = list(NULL, levels(grp)))
-    for (i in levels(grp)) {
+    stat_sub <- matrix(NA, n_delta, n_subs, dimnames = dimnames(subjects))
+    for (i in colnames(stat_sub)) {
         stat_sub[, i] <- apply(subjects[, i, ], 1, fun)
     }
     stat_cov_pop <- fun(1 / precision$pop)
@@ -162,6 +162,21 @@ sweep_posterior <- function(fm, fun) {
     stat_all <- c(stat_pop, stat_sub, stat_cov_sub1, stat_cov_pop,
                   stat_cov_sub2, stat_cov_eps)
     names(stat_all) <- para_names(fm)
+    stat_all
+}
+
+## return a vector of statistics calculated from "fun"
+##
+## this function takes n_samples * n_chain * n_parameters, combine all the
+## chains, calculate the statistics, and return a vector of the statistics for
+## each of the parameters.
+## eg. sweep_posterior_flats(flats, sd), sweep_posterior(flats, mean)
+sweep_posterior_flats <- function(flats, fun) {
+    stat_all <- rep(NA, dim(flats)[3])
+    names(stat_all) <- dimnames(flats)[[3]]
+    for (i in names(stat_all)) {
+        stat_all[i] <- fun(c(flats[, , i]))
+    }
     stat_all
 }
 
@@ -273,7 +288,6 @@ u_scale <- function(x) {
 #' @return A numeric array of ranked values with the same
 #'     size as input.
 r_scale <- function(x) {
-    S <- length(x)
     r <- rank(x, ties.method = 'average')
     if (!is.null(dim(x))) {
         ## output should have the input dimension
@@ -422,10 +436,10 @@ rhat <- function(sims) {
   max(bulk_rhat, tail_rhat)
 }
 
-## takes fms, flatten them and compute split-Rhat for every parameters
-## calculates rank normalized split-Rhat and rank normalized folded-split-Rhat
-rhat_fms <- function(...) {
-    flats <- flatten_chains(...)
+## compute split-Rhat for every parameters calculates rank normalized
+## split-Rhat and rank normalized folded-split-Rhat
+## takes in n_samples * n_chain * n_parameters
+rhat_flats <- function(flats) {
     hats <- rep(NA, dim(flats)[3])
     names(hats) <- dimnames(flats)[[3]]
 
@@ -435,50 +449,54 @@ rhat_fms <- function(...) {
     hats
 }
 
-## takes fms, flatten them and compute standard ESS for every parameters
+## takes fms, flatten them and run rhat_flats
+rhat_fms <- function(...) {
+    flats <- flatten_chains(...)
+    rhat_flats(flats)
+}
+
+## compute standard ESS for every parameters
+## takes in n_samples * n_chain * n_parameters
+ess_flats <- function(flats) {
+    ess <- rep(NA, dim(flats)[3])
+    names(ess) <- dimnames(flats)[[3]]
+
+    for (i in names(ess)) {
+        ess[i] <- ess_rfun(flats[, , i])
+    }
+    ess
+}
+
+## takes fms, flatten them and run rss_flats
 ess_fms <- function(...) {
     flats <- flatten_chains(...)
-    hats <- rep(NA, dim(flats)[3])
-    names(hats) <- dimnames(flats)[[3]]
+    ess_flats(flats)
+}
 
-    for (i in names(hats)) {
-        hats[i] <- ess_rfun(flats[, , i])
-    }
-    hats
+## return a summary statistics for posterior for flats matrix
+summary_matrix_flats <- function(flats) {
+
+    ## need working
+    ## need to write sweep_posterior_flat
+
+    quan025 <- function(x) quantile(x, 0.025, names = FALSE)
+    quan500 <- function(x) quantile(x, 0.5, names = FALSE)
+    quan975 <- function(x) quantile(x, 0.975, names = FALSE)
+
+    tibble::tibble(Parameter = dimnames(flats)[[3]],
+                   Rhat = rhat_flats(flats),
+                   n_eff = ess_flats(flats),
+                   mean = sweep_posterior_flats(flats, mean),
+                   sd = sweep_posterior_flats(flats, sd),
+                   "2.5%" = sweep_posterior_flats(flats, quan025),
+                   "50%" = sweep_posterior_flats(flats, quan500),
+                   "97.5%" = sweep_posterior_flats(flats, quan975))
 }
 
 ## return a summary statistics for posterior
 summary_matrix <- function(...) {
-    combined <- combine_fm(...)
-    quan025 <- function(x) quantile(x, 0.025, names = FALSE)
-    quan500 <- function(x) quantile(x, 0.5, names = FALSE)
-    quan975 <- function(x) quantile(x, 0.975, names = FALSE)
-
-    tibble::tibble(Parameter = para_names(combined),
-                   Rhat = rhat_fms(...),
-                   n_eff = ess_fms(...),
-                   mean = sweep_posterior(combined, mean),
-                   sd = sweep_posterior(combined, sd),
-                   "2.5%" = sweep_posterior(combined, quan025),
-                   "50%" = sweep_posterior(combined, quan500),
-                   "97.5%" = sweep_posterior(combined, quan975))
-}
-
-## return a summary statistics for posterior
-summary_matrix_flats <- function(flats) {
-
-    quan025 <- function(x) quantile(x, 0.025, names = FALSE)
-    quan500 <- function(x) quantile(x, 0.5, names = FALSE)
-    quan975 <- function(x) quantile(x, 0.975, names = FALSE)
-
-    tibble::tibble(Parameter = para_names(combined),
-                   Rhat = rhat_fms(...),
-                   n_eff = ess_fms(...),
-                   mean = sweep_posterior(combined, mean),
-                   sd = sweep_posterior(combined, sd),
-                   "2.5%" = sweep_posterior(combined, quan025),
-                   "50%" = sweep_posterior(combined, quan500),
-                   "97.5%" = sweep_posterior(combined, quan975))
+    flats <- flatten_chains(...)
+    summary_matrix_flats(flats)
 }
 
 ## rank plot

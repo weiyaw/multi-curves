@@ -303,7 +303,7 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     data <- model$data
     colnames(data) <- c("x", "y", "sub", "pop")
 
-    is_multi_pop <- !is.null(model$info$lvl_pop)
+    lvl_pop <- levels(data$pop)
 
     ## Use the range of the predictor if 'limits' is missing
     if (is.null(limits)) {
@@ -314,8 +314,8 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
 
     ## Plot all population if 'plot_which' is missing
     if (is.null(plot_which)) {
-        plot_which <- model$info$lvl_pop
-    } else if (!is.vector(lvl_pop)) {
+        plot_which <- lvl_pop
+    } else if (!is.vector(plot_which)) {
         stop("'plot_which' must be a vector.")
     } else if (!all(plot_which %in% lvl_pop)) {
         stop("Invalid population levels in 'plot_which'.")
@@ -358,12 +358,7 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     }
 
     ## y axis of the plot
-    if (is_multi_pop) {
-        coef_sub <- mapply(`+`, dev_sub[plot_which], coef_pop[plot_which],
-                           SIMPLIFY = FALSE)
-        plot_y_pop <- lapply(coef_pop[plot_which], get_plot_y)
-        plot_y_sub <- lapply(coef_sub[plot_which], get_plot_y)
-    } else {
+    if (length(lvl_pop) == 0) {
         coef_sub <- dev_sub + coef_pop
         ## Align the data format of a single population model to a multiple
         ## population model. Create a dummy name for the population
@@ -371,6 +366,11 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
         data$pop <- "dummy"
         plot_y_pop <- list(dummy = get_plot_y(coef_pop))
         plot_y_sub <- list(dummy = get_plot_y(coef_sub))
+    } else {
+        coef_sub <- mapply(`+`, dev_sub[plot_which], coef_pop[plot_which],
+                           SIMPLIFY = FALSE)
+        plot_y_pop <- lapply(coef_pop[plot_which], get_plot_y)
+        plot_y_sub <- lapply(coef_sub[plot_which], get_plot_y)
     }
 
     ## Reformat dataframe for ggplot
@@ -378,19 +378,19 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     plotdat_sub <- list()
     for (i in plot_which) {
         plotdat_pop[[i]] <- data.frame(x = plot_x, y = plot_y_pop[[i]])
-        plotdat_sub[[i]] <- tidyr::gather(tibble::as.tibble(plot_y_sub[[i]]), sub, y)
+        plotdat_sub[[i]] <- tidyr::gather(tibble::as.tibble(plot_y_sub[[i]]), "sub", "y")
         plotdat_sub[[i]]$x <- plot_x
     }
-    aes <- ggplot2::aes
+    aes_ <- ggplot2::aes_
     geom_point <- ggplot2::geom_point
     geom_line <- ggplot2::geom_line
 
     for (i in plot_which) {
         ## for each population
-        ggobj <- ggplot2::ggplot(mapping = aes(x, y, col = sub)) +
+        ggobj <- ggplot2::ggplot(mapping = aes_(~x, ~y, col = ~sub)) +
             geom_point(data = data[data$pop == i, ]) +             # dataset
-            geom_line(aes(group = sub), data = plotdat_sub[[i]]) + # subject-specific curves
-            geom_line(aes(col = NULL), data = plotdat_pop[[i]])    # population curve
+            geom_line(aes_(group = ~sub), data = plotdat_sub[[i]]) + # subject-specific curves
+            geom_line(aes_(col = NULL), data = plotdat_pop[[i]])    # population curve
         ## + geom_line(aes(col = NULL), data = ols, col = 'red')
         print(ggobj + theme_bw() + theme(legend.position="none"))
     }

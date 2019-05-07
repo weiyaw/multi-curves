@@ -47,7 +47,7 @@ block_diag <- function(..., size = NULL) {
 ## Requirements: Bmat, y, Kmat
 ## Algorithms paremeters: burn, size
 ## Extras: verbose
-bayes_ridge <- function(y, Bmat, Kmat, burn, size, start = NULL, verbose = TRUE) {
+bayes_ridge <- function(y, Bmat, Kmat, burn, size, init = NULL, verbose = TRUE) {
 
     ## hyperparemeters for priors
     ig_a_pop <- 0.001                        # flat prior on standard deviations
@@ -67,11 +67,15 @@ bayes_ridge <- function(y, Bmat, Kmat, burn, size, start = NULL, verbose = TRUE)
     samples <- list(population = matrix(NA, n_terms, size),
                     precision = list())
 
-    if (is.null(start)) {
-        ## initialise theta using ols
+    ## initialise theta using ols
+    if (is.null(init)) {
         kcoef_pop <- tcrossprod(solve(crossprod(Bmat)), Bmat) %*% as.vector(y)
     } else {
-        kcoef_pop <- as.vector(start)
+        if (length(init$pop) == n_terms) {
+            kcoef_pop <- as.vector(init$pop)
+        } else {
+            stop("Invalid initial values.")
+        }
     }
 
     for (k in seq.int(-burn + 1, size)) {
@@ -106,13 +110,43 @@ bayes_ridge <- function(y, Bmat, Kmat, burn, size, start = NULL, verbose = TRUE)
     list(means = means, samples = samples)
 }
 
-
+## initialise theta with a penalised LS estimate, and delta with rnorms with small sd
+initialise_with_pls <- function(init, n_terms, grp, pls) {
+    n_subs <- length(unique(grp))
+    if (is.null(init$pop)) {
+        kcoef_pop <- pls
+    } else {
+        if (length(init$pop) == n_terms) {
+            kcoef_pop <- as.vector(init$pop)
+            cat("Population initial values supplied.\n")
+        } else {
+            stop("Invalid dimension of population initial values.")
+        }
+    }
+    if (is.null(init$sub)) {
+        kcoef_sub <- matrix(rnorm(n_terms * n_subs) * 0.01, n_terms, n_subs,
+                            dimnames = list(NULL, levels(grp)))
+    } else {
+        if (dim(init$sub) == c(n_terms, n_subs)) {
+            kcoef_sub <- as.matrix(init$sub)
+            cat("Subjects initial values supplied.\n")
+            if (is.null(init$sub)) {
+                colnames(kcoef_sub) <- levels(grp)
+            } else {
+                kcoef_sub <- kcoef_sub[, levels(grp)]
+            }
+        } else {
+            stop("Invalid dimension of subject initial values.")
+        }
+    }
+    list(pop = kcoef_pop, sub = kcoef_sub)
+}
 
 ## This is a Gibbs sampler for longitudinal Bayesian ridge; see thesis.
 ## Requirements: Bmat, y, grp, Kmat, dim_sub1
 ## Algorithms paremeters: burn, size
 ## Extras: verbose
-bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_pop = NULL,
+bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NULL,
                             verbose = TRUE) {
 
     ## hyperparemeters for priors
@@ -156,14 +190,12 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_pop 
                                      sub2 = rep(NA, size),
                                      eps = rep(NA, size)))
 
-    ## initialise theta with an LS estimate, and delta with rnorms with small sd
-    if (is.null(start_pop)) {
-        kcoef_pop <- tcrossprod(solve(crossprod(Bmat) + xKmat), Bmat) %*% as.vector(y)
-    } else {
-        kcoef_pop <- as.vector(start_pop)
-    }
-    kcoef_sub <- matrix(rnorm(n_terms * n_subs) * 0.01, n_terms, n_subs,
-                        dimnames = list(NULL, levels(grp)))
+    ## initialise theta with a penalised LS estimate, and delta with rnorms with
+    ## small sd
+    pls <- tcrossprod(solve(crossprod(Bmat) + xKmat), Bmat) %*% as.vector(y)
+    init <- initialise_with_pls(init, n_terms, grp, pls)
+    kcoef_pop <- init$pop
+    kcoef_sub <- init$sub
 
     ## initialise prediction contribution by population coefs and subjects deviations
     kcontrib_pop <- Bmat %*% kcoef_pop
@@ -240,8 +272,8 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_pop 
 ## Requirements: Bmat, y, grp, Kmat, dim_sub1
 ## Algorithms paremeters: burn, size
 ## Extras: verbose
-bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_pop = NULL,
-                            verbose = TRUE) {
+bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NULL,
+                               verbose = TRUE) {
 
     ## hyperparemeters for priors
     ig_a_pop <- 0.001
@@ -268,7 +300,6 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_p
     idx <- tapply(seq_len(n_samples), grp, function(x) x)
 
     ## some crossproducts precalculation
-    xBmat <- crossprod(Bmat)
     xBmat_sub <- array(NA, c(n_terms, n_terms, n_subs), list(NULL, NULL, levels(grp)))
     Bxy_sub <- matrix(NA, n_terms, n_subs, dimnames = list(NULL, levels(grp)))
     for (i in levels(grp)) {
@@ -286,14 +317,12 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_p
                                      sub2 = rep(NA, size),
                                      eps = rep(NA, size)))
 
-    ## initialise theta with an LS estimate, and delta with rnorms with small sd
-    if (is.null(start_pop)) {
-        kcoef_pop <- tcrossprod(solve(crossprod(Bmat) + xKmat), Bmat) %*% as.vector(y)
-    } else {
-        kcoef_pop <- as.vector(start_pop)
-    }
-    kcoef_sub <- matrix(rnorm(n_terms * n_subs) * 0.01, n_terms, n_subs,
-                        dimnames = list(NULL, levels(grp)))
+    ## initialise theta with a penalised LS estimate, and delta with rnorms with
+    ## small sd
+    pls <- tcrossprod(solve(crossprod(Bmat) + xKmat), Bmat) %*% as.vector(y)
+    kcoef <- initialise_with_pls(init, n_terms, grp, pls)
+    kcoef_pop <- kcoef$pop
+    kcoef_sub <- kcoef$sub
 
     ## initialise some intermediate output
     BMB <- array(NA, c(n_terms, n_terms, n_subs), list(NULL, NULL, levels(grp)))
@@ -380,6 +409,56 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, start_p
     list(means = means, samples = samples)
 }
 
+## initialise theta with constraint, and delta with tnorms with small sd
+initialise_with_Amat <- function(init, n_terms, grp, Amat) {
+
+    Ainv <- diag(NCOL(Amat))
+    Ainv[row(Ainv) > diff(dim(Amat))] <- Amat
+    Ainv <- solve(Ainv)
+    n_subs <- length(unique(grp))
+
+    if (is.null(init$pop)) {
+        kcoef_pop <- Ainv %*% rep(1, ncol(Amat))
+    } else {
+        if (length(init$pop) == n_terms) {
+            kcoef_pop <- as.vector(init$pop)
+            cat("Population initial values supplied.\n")
+        } else {
+            stop("Invalid dimension of population initial values.")
+        }
+    }
+    if (is.null(init$sub)) {
+        ## this is coming from gen_init function
+        lower_right <- (-Amat %*% kcoef_pop) + 1
+        lower_left <- kcoef_pop[1:diff(dim(Ainv))]
+        kcoef_sub <- t(tnorm::rmvtnorm(n_subs, kcoef_pop, diag(n_terms) * 0.01,
+                                       initial = Ainv %*% c(lower_left, lower_right),
+                                       F = Amat,
+                                       g = Amat %*% kcoef_pop))
+        colnames(kcoef_sub) <- levels(grp)
+    } else {
+        if (dim(init$sub) == c(n_terms, n_subs)) {
+            kcoef_sub <- as.matrix(init$sub)
+            cat("Subjects initial values supplied.\n")
+            if (is.null(init$sub)) {
+                colnames(kcoef_sub) <- levels(grp)
+            } else {
+                kcoef_sub <- kcoef_sub[, levels(grp)]
+            }
+        } else {
+            stop("Invalid dimension of subject initial values.")
+        }
+    }
+
+    ## check feasibility
+    if (any(Amat %*% kcoef_pop < 0)) {
+        stop("Population initial value violates constraints.")
+    }
+    if (any(Amat %*% (as.numeric(kcoef_pop) + kcoef_sub) < 0)) {
+        stop("Subjects initial value violates constraints.")
+    }
+    list(pop = kcoef_pop, sub = kcoef_sub, Ainv = Ainv)
+}
 
 ## This is a Gibbs sampler for constrained longitudinal Bayesian ridge; see thesis.
 ## A * theta >= 0 ; A * (theta + delta_i) >= 0
@@ -431,14 +510,6 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
     }
     xKmat <- crossprod(Kmat)
 
-    ## a matrix to generate feasible starting points quickly
-    Ainv <- diag(NCOL(Amat))
-    Ainv[row(Ainv) > diff(dim(Amat))] <- Amat
-    Ainv <- solve(Ainv)
-    gen_init <- function(lower, mu) {
-        Ainv %*% c(mu[1:(NCOL(Ainv) - length(lower))], lower + 1)
-    }
-
     ## initialise the output list
     samples <- list(population = matrix(NA, n_terms, size),
                     subjects = array(NA, c(n_terms, n_subs, size),
@@ -448,23 +519,14 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
                                      sub2 = rep(NA, size),
                                      eps = rep(NA, size)))
 
-    ## initialise theta and delta with tnorms with small sd
-    if (is.null(init)) {
-        kcoef_pop <- Ainv %*% rep(1, ncol(Amat))
-        kcoef_sub <- t(tnorm::rmvtnorm(n_subs, kcoef_pop, diag(n_terms) * 0.01,
-                                       initial = gen_init(-Amat %*% kcoef_pop, kcoef_pop),
-                                       F = Amat,
-                                       g = Amat %*% kcoef_pop))
-        colnames(kcoef_sub) <- levels(grp)
-
-    } else {
-        if (length(init$pop) == n_terms && dim(init$sub) == c(n_terms, n_subs)) {
-            kcoef_pop <- as.vector(init$pop)
-            kcoef_sub <- as.matrix(init$sub)
-            colnames(kcoef_sub) <- levels(grp)
-        } else {
-            stop("Invalid initial values.")
-        }
+    ## initialise theta and delta with tnorms with small sd, and a matrix to
+    ## generate feasible starting points quickly
+    init <- initialise_with_Amat(init, n_terms, grp, Amat)
+    kcoef_pop <- init$pop
+    kcoef_sub <- init$sub
+    Ainv <- init$Ainv
+    gen_init <- function(lower, mu) {
+        Ainv %*% c(mu[1:(NCOL(Ainv) - length(lower))], lower + 1)
     }
 
     ## initialise prediction contribution by population coefs and subjects deviations
@@ -508,8 +570,8 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
         sig <- 1 / kprec_eps * M_pop
         ## kcoef_pop <- t(mvtnorm::rmvnorm(1, mu, sig))
         kcoef_pop <- t(tnorm::rmvtnorm(1, mu, sig,
-                                       ## initial = gen_init(lower_pop, mu),
-                                       initial = kcoef_pop,
+                                       initial = gen_init(lower_pop, mu),
+                                       ## initial = kcoef_pop,
                                        F = Amat,
                                        g = -lower_pop))
         kcontrib_pop <- Bmat %*% kcoef_pop
@@ -525,8 +587,8 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
             sig <- M_sub / kprec_eps
             ## kcoef_sub[, i] <- t(mvtnorm::rmvnorm(1, mu, sig))
             kcoef_sub[, i] <- t(tnorm::rmvtnorm(1, mu, sig,
-                                                ## initial = gen_init(lower_sub, mu),
-                                                initial = kcoef_sub[, i],
+                                                initial = gen_init(lower_sub, mu),
+                                                ## initial = kcoef_sub[, i],
                                                 F = Amat,
                                                 g = -lower_sub))
             kcontrib_sub[idx[[i]]] <- Bmat[idx[[i]], ] %*% kcoef_sub[, i]
@@ -552,7 +614,6 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
                   subjects = rowMeans(samples$subjects, dims = 2))
     list(means = means, samples = samples)
 }
-
 
 ## This is a Gibbs sampler for constrained longitudinal Bayesian ridge, with an
 ## HMC step to generate pop and sub coefs; see thesis.
@@ -597,37 +658,13 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
     inv_omega_1 <- chol2inv(chol(omega_1))
     inv_omega_2 <- chol2inv(chol(omega_2))
 
-    ## some crossproducts precalculation
-    ## xBmat <- crossprod(Bmat)
-    ## xBmat_sub <- array(NA, c(n_terms, n_terms, n_subs), list(NULL, NULL, levels(grp)))
-    ## for (i in levels(grp)) {
-    ##     xBmat_sub[, , i] <- crossprod(Bmat[idx[[i]], ])
-    ## }
-
     ## construct full constraint matrix
     fAmat_left <- t(matrix(t(Amat), NCOL(Amat), NROW(Amat) * (n_subs + 1)))
     fAmat_topright <- matrix(0, NROW(Amat), n_terms * n_subs)
     fAmat_btmright <- block_diag(Amat, size = n_subs)
     fAmat <- cbind(fAmat_left, rbind(fAmat_topright, fAmat_btmright))
+    lower <- rep(0, NROW(Amat))
     flower <- rep(lower, n_subs + 1)
-
-    ## generate an initial value for the hmc sampler
-    if (is.null(init)) {
-        Ainv <- diag(NCOL(Amat))
-        Ainv[row(Ainv) > diff(dim(Amat))] <- Amat
-        fAinv_left <- t(matrix(t(Ainv), NCOL(Ainv), NROW(Ainv) * (n_subs + 1)))
-        fAinv_topright <- matrix(0, NROW(Ainv), n_terms * n_subs)
-        fAinv_btmright <- block_diag(Ainv, size = n_subs)
-        fAinv <- cbind(fAinv_left, rbind(fAinv_topright, fAinv_btmright))
-        fAinv <- solve(fAinv)
-        kcoef <- fAinv %*% rep(c(rep(3, diff(dim(Amat))), lower + 1), n_subs + 1)
-    } else {
-        if (length(init$pop) == n_terms && dim(init$sub) == c(n_terms, n_subs)) {
-            kcoef <- c(init$pop, init$sub)
-        } else {
-            stop("Invalid initial values.")
-        }
-    }
 
     ## construct full design matrix
     fBmat_right <- do.call(block_diag, lapply(idx, function(x) Bmat[x, ]))
@@ -647,9 +684,15 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
                                      sub2 = rep(NA, size),
                                      eps = rep(NA, size)))
 
-    kcoef_pop <- kcoef[1:n_terms]
-    kcoef_sub <- matrix(kcoef[-(1:n_terms)], n_terms, n_subs,
-                        dimnames = list(NULL, levels(grp)))
+    ## kcoef_pop <- kcoef[1:n_terms]
+    ## kcoef_sub <- matrix(kcoef[-(1:n_terms)], n_terms, n_subs,
+    ##                     dimnames = list(NULL, levels(grp)))
+
+    ## initialise theta and delta with tnorms with small sd
+    init <- initialise_with_Amat(init, n_terms, grp, Amat)
+    kcoef_pop <- init$pop
+    kcoef_sub <- init$sub
+    kcoef <- c(kcoef_pop, kcoef_sub)
 
     ## initialise prediction contribution by population coefs and subjects deviations
     kcontrib_pop <- Bmat %*% kcoef_pop

@@ -50,7 +50,8 @@ fm1 <- bayes_ridge(y, cbind(X_pop, Z_pop), K_mat, 0, 10000)
 
 source("main-ridge.R")
 set.seed(24)
-system.time(fm2_1 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 0, 1000))
+
+system.time(fm2_1 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 2000))
 system.time(fm2_2 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 5000))
 system.time(fm2_3 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 5000))
 system.time(fm2_4 <- bayes_ridge_sub(y, grp, B_pop, K_mat, deg + 1, 1000, 5000))
