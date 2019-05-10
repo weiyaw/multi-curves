@@ -1,0 +1,52 @@
+library(tidyverse)
+rm(list = ls())
+source("~/Dropbox/master/algo/subor.R")
+
+# generate some parameters
+knt <- seq(0, 10, 2)
+theta <- c(10, 13, 15.5, 17, 24.5, 25)
+n_terms <- length(theta)
+n_subs <- 5
+D <- get_diff_mat(n_terms, 1 + 1)
+G <- cbind(1, poly(1:n_terms, deg = 1, raw = FALSE, simple = TRUE))
+H <- crossprod(D, solve(tcrossprod(D)))
+GH <- cbind(G, H)
+Amat <- get_constmat_bs(n_terms, "increasing")
+set.seed(1, "Mersenne-Twister")
+## using hierarchical model
+## bvs <- t(mvtnorm::rmvnorm(n_subs, mean = rep(0, n_terms), sigma = diag(n_terms) * 10))
+bvs <- t(tnorm::rmvtnorm(n_subs, mean = rep(0, n_terms), cov = diag(n_terms) * 10,
+                         initial = rep(0, n_terms),
+                         F = Amat %*% GH, g = Amat %*% theta))
+delta <- GH %*% bvs
+
+## using standard model
+## delta <- t(mvtnorm::rmvnorm(n_subs, mean = rep(0, n_terms), sigma = diag(n_terms) * 10))
+## delta <- t(tnorm::rmvtnorm(n_subs, mean = rep(0, n_terms), cov = diag(n_terms) * 40,
+##                            initial = rep(0, n_terms),
+##                            F = Amat, g = Amat %*% theta))
+colnames(delta) <- paste0("sub", 1:n_subs)
+
+
+## check if the parameters satisfy the constraints
+all(Amat %*% theta >= 0)
+all(Amat %*% (theta + delta) >= 0)
+
+## add some noise
+set.seed(2, "Mersenne-Twister")
+x <- c(0, seq(0.5, 9.5, len = 10) + rnorm(10, 0, 0.1), 10)
+Bmat <- get_design_bs(x, length(knt) - 2, 1)$design
+y <- Bmat %*% (theta + delta) + rnorm(nrow(Bmat) * ncol(delta), 0, 0.5)
+simdata <- as.tibble(cbind(x, y)) %>% gather(sub, y, -x)
+write_csv(simdata, "~/Dropbox/master/algo/data/simdata.csv")
+
+## visualise the data
+plot_x <- seq(0, 10, len = 300)
+plot_y <- get_design_bs(plot_x, length(knt) - 2, 1)$design %*% (theta + delta)
+plot_y_pop <- get_design_bs(plot_x, length(knt) - 2, 1)$design %*% theta
+plotdata <- as.tibble(cbind(plot_x, plot_y)) %>% gather(sub, plot_y, -plot_x)
+ggplot() +
+    geom_line(aes(plot_x, plot_y, col = sub), plotdata) +
+    geom_point(aes(x, y, col = sub), simdata) +
+    geom_line(aes(plot_x, plot_y_pop)) +
+    theme_bw() + theme(legend.position="none")

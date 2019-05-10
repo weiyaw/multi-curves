@@ -280,6 +280,13 @@ get_ols <- function(response, design) {
     tcrossprod(solve(crossprod(design)), design) %*% as.vector(response)
 }
 
+## Get a penalised least squares estimate with a given response, design matrix
+## and penalty matrix.
+get_pls <- function(response, design, penalty) {
+    inv_term <- chol2inv(chol(crossprod(design) + crossprod(penalty)))
+    tcrossprod(inv_term, design) %*% as.vector(response)
+}
+
 
 ################################################################
 ##########################            ##########################
@@ -287,13 +294,20 @@ get_ols <- function(response, design) {
 ##########################            ##########################
 ################################################################
 
-## Plot multiple lines
+## Plot the population and subject curves (suitable for models with multiple populations)
+## 'plot_which' takes a vector of names (for models with multiple populations)
+## If mle is true, plot MLE estimate rather than the posterior mean
+## If shade is true, thin the population samples by 10 and plot the thinned samples.
+
 ## Requires: model$basis$knots (including extrema), model$basis$type,
-##   model$basis$degree, model$info$lvl_pop, model$data, model$mean
-##
-plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle = FALSE) {
+##   model$basis$degree, model$info$lvl_pop, model$data, model$mean,
+##   model$samples$population (if shade is true)
+
+plot_spline <- function(model, limits = NULL, plot_which = NULL, mle = FALSE,
+                        shade = FALSE) {
 
     EPS <- 1e-6
+    fine <- 200                         # how fine the plot_x should be?
     knots <- model$basis$knots
     names(knots) <- NULL
     type <- model$basis$type
@@ -343,11 +357,11 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
     }
 
     if (mle) {
-        ## Extract the mle (posterior mode)
+        ## extract the mle (posterior mode)
         coef_pop <- model$mle$population
         dev_sub <- model$mle$subjects
     } else {
-        ## Extract the posterior means
+        ## extract the posterior means
         coef_pop <- model$means$population
         dev_sub <- model$means$subjects
     }
@@ -373,46 +387,49 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, fine = 200, mle
         plot_y_sub <- lapply(coef_sub[plot_which], get_plot_y)
     }
 
+    `%>%` <- tidyr::`%>%`               # define piping
+    if (shade) {
+        if (plot_which != "dummy") {
+            stop("shade only works for models with single population.")
+        }
+        ## thin the sample by 10
+        thin_idx <- seq(10, NCOL(model$samples$population), 10)
+        thin_y <- get_plot_y(model$samples$population[, thin_idx])
+        colnames(thin_y) <- thin_idx
+        prob <- c(0.25, 0.75)
+        prob_outer <- c(0.05, 0.95)
+        plotdat_thin <- apply(thin_y, 1, function(x) quantile(x, c(prob, prob_outer))) %>%
+            {tibble::as.tibble(t(.))} %>%
+            dplyr::mutate(x = plot_x)
+    }
     ## Reformat dataframe for ggplot
     plotdat_pop <- list()
     plotdat_sub <- list()
     for (i in plot_which) {
         plotdat_pop[[i]] <- data.frame(x = plot_x, y = plot_y_pop[[i]])
-        plotdat_sub[[i]] <- tidyr::gather(tibble::as.tibble(plot_y_sub[[i]]), "sub", "y")
-        plotdat_sub[[i]]$x <- plot_x
-    }
+        plotdat_sub[[i]] <- tibble::as.tibble(plot_y_sub[[i]]) %>%
+            dplyr::mutate(x = plot_x) %>%
+            tidyr::gather("sub", "y", -"x")
+         }
     aes_ <- ggplot2::aes_
     geom_point <- ggplot2::geom_point
     geom_line <- ggplot2::geom_line
 
     for (i in plot_which) {
-        ## for each population
-        ggobj <- ggplot2::ggplot(mapping = aes_(~x, ~y, col = ~sub)) +
-            geom_point(data = data[data$pop == i, ]) +             # dataset
-            geom_line(aes_(group = ~sub), data = plotdat_sub[[i]]) + # subject-specific curves
-            geom_line(aes_(col = NULL), data = plotdat_pop[[i]])    # population curve
-        ## + geom_line(aes(col = NULL), data = ols, col = 'red')
+        ggobj <- ggplot2::ggplot(mapping = aes_(~x, ~y))
+        if (shade) {
+        ggobj <- ggobj +
+            geom_ribbon(aes_(y = NULL, ymin = ~`25%`, ymax = ~`75%`), plotdat_thin,
+                        fill = "grey90") +
+            geom_ribbon(aes_(y = NULL, ymin = ~`5%`, ymax = ~`95%`), plotdat_thin,
+                        fill = "grey90", alpha = 0.45)
+        }
+        ggobj <- ggobj +
+            geom_point(aes_(col = ~sub), data[data$pop == i, ]) +
+            geom_line(aes_(col = ~sub, group = ~sub), plotdat_sub[[i]]) +
+            geom_line(data = plotdat_pop[[i]])
         print(ggobj + theme_bw() + theme(legend.position="none"))
     }
-
-    ## This is a reassurance step (reorder group levels)
-    ## plot.data$grps <- factor(plot.data$grps, levels = colnames(coefs))
-
-    ## plot.data$x <- rep(x, times = NCOL(coefs))
-    ## pop.idx <- plot.data$grps %in% "population"
-
-
-    ## colnames(data) <- c("x", "y", "grps")
-    ## base <- ggplot2::ggplot()
-    ## gg_pop <- ggplot2::geom_line(ggplot2::aes(plot_x, plot_y, group = grps, col = grps),
-    ##                           plot.data[!pop.idx, ])
-
-    ##         ggplot2::geom_point(ggplot2::aes(x, y, col = grps), data) +
-    ##         ggplot2::geom_line(ggplot2::aes(x, value), plot.data[pop.idx, ],
-    ##                            col = "black") +
-    ##         ggplot2::geom_point(ggplot2::aes(x = knots.within,
-    ##                                          y = rep(0, length(knots.within))),
-    ##                             col = "red", shape = 4)
 }
 
 
