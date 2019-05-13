@@ -399,15 +399,15 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, mle = FALSE,
         prob <- c(0.25, 0.75)
         prob_outer <- c(0.05, 0.95)
         plotdat_thin <- apply(thin_y, 1, function(x) quantile(x, c(prob, prob_outer))) %>%
-            {tibble::as.tibble(t(.))} %>%
+            {tibble::as_tibble(t(.))} %>%
             dplyr::mutate(x = plot_x)
     }
     ## Reformat dataframe for ggplot
     plotdat_pop <- list()
     plotdat_sub <- list()
     for (i in plot_which) {
-        plotdat_pop[[i]] <- data.frame(x = plot_x, y = plot_y_pop[[i]])
-        plotdat_sub[[i]] <- tibble::as.tibble(plot_y_sub[[i]]) %>%
+        plotdat_pop[[i]] <- data_frame(x = plot_x, y = as.numeric(plot_y_pop[[i]]))
+        plotdat_sub[[i]] <- tibble::as_tibble(plot_y_sub[[i]]) %>%
             dplyr::mutate(x = plot_x) %>%
             tidyr::gather("sub", "y", -"x")
          }
@@ -430,6 +430,7 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, mle = FALSE,
             geom_line(data = plotdat_pop[[i]])
         print(ggobj + theme_bw() + theme(legend.position="none"))
     }
+    ggobj
 }
 
 

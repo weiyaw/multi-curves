@@ -54,18 +54,20 @@ RNGkind("Mersenne-Twister")
 source("~/Dropbox/master/algo/diagnostic.R")
 source("~/Dropbox/master/algo/subor.R")
 fm <- do.call(combine_fm, fm1_ls)
-## for (fm in fm1_ls) {
-    if (type == "tpf") {
-        fm$basis <- list(type = 'tpf', knots = des_info$knots, degree = deg) # tpf
-    } else if (type == "bs") {
-        fm$basis <- list(type = 'bs_hier', knots = des_info$knots, degree = deg, # bs
-                         trans_mat = cbind(Gmat, Hmat))
-    } else if (type == "bs-ridge") {
-        fm$basis <- list(type = 'bs', knots = des_info$knots, degree = deg) # bs-ridge
-    }
-    fm$data <- simdata %>% mutate(grp_sub = sub, grp_pop = NA, sub = NULL)
-    plot_spline(fm, shade = TRUE)
-## }
+if (type == "tpf") {
+    fm$basis <- list(type = 'tpf', knots = des_info$knots, degree = deg) # tpf
+} else if (type == "bs") {
+    fm$basis <- list(type = 'bs_hier', knots = des_info$knots, degree = deg, # bs
+                     trans_mat = cbind(Gmat, Hmat))
+} else if (type == "bs-ridge") {
+    fm$basis <- list(type = 'bs', knots = des_info$knots, degree = deg) # bs-ridge
+}
+fm$data <- simdata %>% mutate(grp_sub = sub, grp_pop = NA, sub = NULL)
+g1curve <- plot_spline(fm, shade = TRUE) + theme_bw() + theme(legend.position="none")
+
+## regression curve
+ggsave("~/Dropbox/master/thesis/images/truth-curve-gibbs.pdf", g1curve,
+       width = 7, height = 5)
 
 ## diagnostic
 source("~/Dropbox/master/algo/diagnostic.R")
@@ -73,10 +75,13 @@ flat1 <- do.call(flatten_chains, fm1_ls)
 long1 <- summary_matrix_flats(flat1)
 ## print(xtable(short_sum), include.rownames=FALSE, tabular.environment = "longtable")
 short1 <- long1 %>% filter(Rhat > 1.01 | n_eff < 500)
-g1 <- grid.arrange(mcmc_trace(flat1, "theta[1]"),
-                   mcmc_dens_overlay(flat1, "theta[1]"),
-                   nrow = 1)
-ggsave("~/Dropbox/master/thesis/images/truth-gibbs.pdf", g1, width = 14, height = 5)
+g1diag <- grid.arrange(mcmc_trace(flat1, "theta[1]"),
+                       mcmc_dens_overlay(flat1, "theta[1]"),
+                       nrow = 1)
+
+## diagnostic plots
+ggsave("~/Dropbox/master/thesis/images/truth-diag-gibbs.pdf", g1diag,
+       width = 14, height = 5)
 
 source("~/Dropbox/master/algo/main-ridge.R")
 set.seed(101, kind = "L'Ecuyer-CMRG")
@@ -112,9 +117,6 @@ short1v2 <- long1v2 %>% filter(Rhat > 1.01 | n_eff < 500)
 grid.arrange(mcmc_trace(flat1v2, "theta[1]"),
              mcmc_dens_overlay(flat1v2, "theta[1]"),
              nrow = 1)
-
-ggsave("~/Desktop/trace.png", grid.arrange(t1, t1v2))
-ggsave("~/Desktop/trace-highlight.png", grid.arrange(th1, th1v2))
 
 
 

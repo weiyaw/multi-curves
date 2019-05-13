@@ -142,6 +142,57 @@ initialise_with_pls <- function(init, n_terms, grp, pls) {
     list(pop = kcoef_pop, sub = kcoef_sub)
 }
 
+## calculates unnormalised log posterior for the subject specific model
+## vector of coef_pop
+## matrix of coef_sub
+## list of prec: pop, sub1, sub2, eps
+## list of contrib: pop, sub
+## list of para: xKmat, rank_K, dim_sub1, y
+## list of prior hyperparameters: ig_a, ig_b, iw_v, iw_lambda
+logpost_sub <- function(coef_pop, coef_sub, prec, contrib, para, prior) {
+
+    check_names <- prod(c("pop", "sub1", "sub2", "eps") %in% names(prec),
+                        c("pop", "sub") %in% names(contrib),
+                        c("xKmat", "rank_K", "dim_sub1", "y") %in% names(para),
+                        c("ig_a", "ig_b", "iw_v", "iw_lambda") %in% names(prior),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_a),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_b))
+
+    if (check_names == 0) {
+        stop("Missing elements in the list.")
+    }
+
+    xKmat <- para$xKmat
+    rank_K <- para$rank_K
+    dim_sub1 <- para$dim_sub1
+    y <- para$y
+    ig_a <- prior$ig_a
+    ig_b <- prior$ig_b
+    iw_v <- prior$iw_v
+    iw_lambda <- prior$iw_lambda          # assuming symmetric
+
+    prec_sub <- block_diag(prec$sub1, diag(prec$sub2, NROW(coef_sub) - dim_sub1))
+
+    ## inverse gamma
+    lp_prec_pop <- (ig_a$pop + 1) * log(prec$pop) - ig_b$pop * prec$pop
+    lp_prec_sub2 <- (ig_a$sub2 + 1) * log(prec$sub2) - ig_b$sub2 * prec$sub2
+    lp_prec_eps <- (ig_a$eps + 1) * log(prec$eps) - ig_b$eps * prec$eps
+
+    ## inverse Wishart
+    lp_prec_sub1 <- 0.5 * (iw_v + dim_sub1 + 1) * determinant(prec$sub1)$modulus -
+       0.5 * sum(diag(iw_lambda %*% prec$sub1))
+
+    ## Gaussian
+    lp_pop <- 0.5 * rank_K * log(prec$pop) -
+        0.5 * prec$pop * crossprod(coef_pop, xKmat %*% coef_pop)
+    lp_sub <- NCOL(coef_sub) / 2 * determinant(prec_sub)$modulus -
+        0.5 * sum(apply(coef_sub, 2, function(x) crossprod(x, prec_sub %*% x)))
+    lp_like <- length(y) / 2 * log(prec$eps) -
+        0.5 * prec$eps * crossprod(y - contrib$pop - contrib$sub)
+
+    lp_prec_pop + lp_prec_sub1 + lp_prec_sub2 + lp_prec_eps + lp_pop + lp_sub + lp_like
+}
+
 ## This is a Gibbs sampler for longitudinal Bayesian ridge; see thesis.
 ## Requirements: Bmat, y, grp, Kmat, dim_sub1
 ## Algorithms paremeters: burn, size
@@ -158,6 +209,18 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NUL
     ig_b_eps <- 0.001
     iw_v <- dim_sub1 + 1
     iw_lambda <- diag(dim_sub1)          # assuming symmetric
+
+    prior <- list(ig_a = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  ig_b = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  iw_v = dim_sub1 + 1,
+                  iw_lambda = diag(dim_sub1))
+
+    check_names <- prod(c("ig_a", "ig_b", "iw_v", "iw_lambda") %in% names(prior),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_a),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_b))
+    if (check_names == 0) {
+        stop("Missing prior hyperparameters.")
+    }
 
     ## clean up grp variable
     if (is.factor(grp)) {
@@ -188,7 +251,8 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NUL
                     precision = list(pop = rep(NA, size),
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
-                                     eps = rep(NA, size)))
+                                     eps = rep(NA, size)),
+                    lp = rep(NA, size))
 
     ## initialise theta with a penalised LS estimate, and delta with rnorms with
     ## small sd
@@ -259,6 +323,13 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NUL
             samples$precision$eps[k] <- kprec_eps
             samples$population[, k] <- kcoef_pop
             samples$subjects[, , k] <- kcoef_sub
+
+            ## calculate unnormalised log-posterior
+            prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
+                         sub2 = kprec_sub2, eps = kprec_eps)
+            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
+            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1, y = y)
+            samples$lp[k] <- logpost_sub(kcoef_pop, kcoef_sub, prec, contrib, para, prior)
         }
     }
 
@@ -284,6 +355,11 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
     ig_b_eps <- 0.001
     iw_v <- dim_sub1 + 1
     iw_lambda <- diag(dim_sub1)          # assuming symmetric
+
+    prior <- list(ig_a = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  ig_b = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  iw_v = dim_sub1 + 1,
+                  iw_lambda = diag(dim_sub1))
 
     ## clean up grp variable
     if (is.factor(grp)) {
@@ -315,7 +391,8 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
                     precision = list(pop = rep(NA, size),
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
-                                     eps = rep(NA, size)))
+                                     eps = rep(NA, size)),
+                    lp = rep(NA, size))
 
     ## initialise theta with a penalised LS estimate, and delta with rnorms with
     ## small sd
@@ -401,7 +478,14 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
             samples$precision$eps[k] <- kprec_eps
             samples$population[, k] <- kcoef_pop
             samples$subjects[, , k] <- kcoef_sub
-        }
+
+           ## calculate unnormalised log-posterior
+            prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
+                         sub2 = kprec_sub2, eps = kprec_eps)
+            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
+            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1, y = y)
+            samples$lp[k] <- logpost_sub(kcoef_pop, kcoef_sub, prec, contrib, para, prior)
+       }
     }
 
     means <- list(population = rowMeans(samples$population),

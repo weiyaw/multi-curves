@@ -31,7 +31,7 @@ flatten_chain <- function(fm) {
     flat[, grep("sig2_theta", para)] <- fm$samples$precision$pop
     flat[, grep("sig2_delta2", para)] <- fm$samples$precision$sub2
     flat[, grep("sig2_eps", para)] <- fm$samples$precision$eps
-
+    flat[, grep("lp__", para)] <- fm$samples$lp
     flat
 }
 
@@ -132,7 +132,7 @@ para_names <- function(fm) {
         }
     }
     sig2_names <- c("sig2_theta", "sig2_delta2", "sig2_eps")
-    c(theta_names, delta_names, cov_names, sig2_names)
+    c(theta_names, delta_names, cov_names, sig2_names, "lp__")
 }
 
 ## return a vector of statistics calculated from "fun"
