@@ -31,7 +31,12 @@ flatten_chain <- function(fm) {
     flat[, grep("sig2_theta", para)] <- fm$samples$precision$pop
     flat[, grep("sig2_delta2", para)] <- fm$samples$precision$sub2
     flat[, grep("sig2_eps", para)] <- fm$samples$precision$eps
-    flat[, grep("lp__", para)] <- fm$samples$lp
+    if (!is.null(fm$samples$lp)) {
+        flat[, grep("lp__", para)] <- fm$samples$lp
+    }
+    if (!is.null(fm$samples$ll)) {
+        flat[, grep("ll__", para)] <- fm$samples$ll
+    }
     flat
 }
 
@@ -71,7 +76,9 @@ combine_fm <- function(...) {
                     precision = list(pop = rep(NA, size),
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
-                                     eps = rep(NA, size)))
+                                     eps = rep(NA, size)),
+                    lp = rep(NA, size),
+                    ll = rep(NA, size))
     for (i in 1:n_chains) {
         idx <- seq(start_idx[i], end_idx[i])
         samples$population[, idx] <- fms[[i]]$samples$population
@@ -80,6 +87,12 @@ combine_fm <- function(...) {
         samples$precision$sub1[, , idx] <- fms[[i]]$samples$precision$sub1
         samples$precision$sub2[idx] <- fms[[i]]$samples$precision$sub2
         samples$precision$eps[idx] <- fms[[i]]$samples$precision$eps
+        if (!is.null(fms[[i]]$samples$lp)) {
+            samples$lp[idx] <- fms[[i]]$samples$lp
+        }
+        if (!is.null(fms[[i]]$samples$ll)) {
+            samples$ll[idx] <- fms[[i]]$samples$ll
+        }
     }
     means <- list(population = rowMeans(samples$population),
                   subjects = rowMeans(samples$subjects, dims = 2))

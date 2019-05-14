@@ -149,11 +149,10 @@ initialise_with_pls <- function(init, n_terms, grp, pls) {
 ## list of contrib: pop, sub
 ## list of para: xKmat, rank_K, dim_sub1, y
 ## list of prior hyperparameters: ig_a, ig_b, iw_v, iw_lambda
-logpost_sub <- function(coef_pop, coef_sub, prec, contrib, para, prior) {
+logprior_sub <- function(coef_pop, coef_sub, prec, para, prior) {
 
     check_names <- prod(c("pop", "sub1", "sub2", "eps") %in% names(prec),
-                        c("pop", "sub") %in% names(contrib),
-                        c("xKmat", "rank_K", "dim_sub1", "y") %in% names(para),
+                        c("xKmat", "rank_K", "dim_sub1") %in% names(para),
                         c("ig_a", "ig_b", "iw_v", "iw_lambda") %in% names(prior),
                         c("pop", "sub2", "eps") %in% names(prior$ig_a),
                         c("pop", "sub2", "eps") %in% names(prior$ig_b))
@@ -165,7 +164,6 @@ logpost_sub <- function(coef_pop, coef_sub, prec, contrib, para, prior) {
     xKmat <- para$xKmat
     rank_K <- para$rank_K
     dim_sub1 <- para$dim_sub1
-    y <- para$y
     ig_a <- prior$ig_a
     ig_b <- prior$ig_b
     iw_v <- prior$iw_v
@@ -187,11 +185,26 @@ logpost_sub <- function(coef_pop, coef_sub, prec, contrib, para, prior) {
         0.5 * prec$pop * crossprod(coef_pop, xKmat %*% coef_pop)
     lp_sub <- NCOL(coef_sub) / 2 * determinant(prec_sub)$modulus -
         0.5 * sum(apply(coef_sub, 2, function(x) crossprod(x, prec_sub %*% x)))
-    lp_like <- length(y) / 2 * log(prec$eps) -
-        0.5 * prec$eps * crossprod(y - contrib$pop - contrib$sub)
 
-    lp_prec_pop + lp_prec_sub1 + lp_prec_sub2 + lp_prec_eps + lp_pop + lp_sub + lp_like
+    lp_prec_pop + lp_prec_sub1 + lp_prec_sub2 + lp_prec_eps + lp_pop + lp_sub
 }
+
+## calculates unnormalised log-likelihood for the subject specific model
+## list of prec: eps
+## list of contrib: pop, sub
+## vector of response
+loglike_sub <- function(prec, contrib, y) {
+    check_names <- prod(c("eps") %in% names(prec),
+                        c("pop", "sub") %in% names(contrib))
+
+    if (check_names == 0) {
+        stop("Missing elements in the list.")
+    }
+
+    length(y) / 2 * log(prec$eps) -
+        0.5 * prec$eps * crossprod(y - contrib$pop - contrib$sub)
+}
+
 
 ## This is a Gibbs sampler for longitudinal Bayesian ridge; see thesis.
 ## Requirements: Bmat, y, grp, Kmat, dim_sub1
@@ -252,7 +265,8 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NUL
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
                                      eps = rep(NA, size)),
-                    lp = rep(NA, size))
+                    lp = rep(NA, size),
+                    ll = rep(NA, size))
 
     ## initialise theta with a penalised LS estimate, and delta with rnorms with
     ## small sd
@@ -324,12 +338,16 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NUL
             samples$population[, k] <- kcoef_pop
             samples$subjects[, , k] <- kcoef_sub
 
-            ## calculate unnormalised log-posterior
+            ## calculate unnormalised log-likelihood
             prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
                          sub2 = kprec_sub2, eps = kprec_eps)
             contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
-            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1, y = y)
-            samples$lp[k] <- logpost_sub(kcoef_pop, kcoef_sub, prec, contrib, para, prior)
+            samples$ll[k] <- loglike_sub(prec, contrib, y)
+
+            ## calculate unnormalised log-posterior
+            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
+            samples$lp[k] <- logprior_sub(kcoef_pop, kcoef_sub, prec, para, prior) +
+                samples$ll[k]
         }
     }
 
@@ -392,7 +410,8 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
                                      eps = rep(NA, size)),
-                    lp = rep(NA, size))
+                    lp = rep(NA, size),
+                    ll = rep(NA, size))
 
     ## initialise theta with a penalised LS estimate, and delta with rnorms with
     ## small sd
@@ -479,15 +498,18 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
             samples$population[, k] <- kcoef_pop
             samples$subjects[, , k] <- kcoef_sub
 
-           ## calculate unnormalised log-posterior
+            ## calculate unnormalised log-likelihood
             prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
                          sub2 = kprec_sub2, eps = kprec_eps)
             contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
-            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1, y = y)
-            samples$lp[k] <- logpost_sub(kcoef_pop, kcoef_sub, prec, contrib, para, prior)
-       }
-    }
+            samples$ll[k] <- loglike_sub(prec, contrib, y)
 
+            ## calculate unnormalised log-posterior
+            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
+            samples$lp[k] <- logprior_sub(kcoef_pop, kcoef_sub, prec, para, prior) +
+                samples$ll[k]
+        }
+    }
     means <- list(population = rowMeans(samples$population),
                   subjects = rowMeans(samples$subjects, dims = 2))
     list(means = means, samples = samples)

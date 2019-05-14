@@ -287,6 +287,30 @@ get_pls <- function(response, design, penalty) {
     tcrossprod(inv_term, design) %*% as.vector(response)
 }
 
+## get the maximum-a-posteriori or maximum likelihood estimate from the model
+get_max <- function(fm, type = "map") {
+    if (type == "map") {
+        if (is.null(fm$samples$lp)) {
+            stop("Log-posterior not available.")
+        } else {
+            idx <- which.max(fm$samples$lp)
+        }
+    } else if (type == "mle") {
+        if (is.null(fm$samples$ll)) {
+            stop("Log-likelihood not available.")
+        } else {
+            idx <- which.max(fm$samples$ll)
+        }
+    } else {
+        stop("Unknown type in get_max.")
+    }
+    list(population = fm$samples$population[, idx],
+         subjects = fm$samples$subjects[, , idx],
+         precision = list(pop = fm$samples$precision$pop[idx],
+                          sub1 = fm$samples$precision$sub1[, , idx],
+                          sub2 = fm$samples$precision$sub2[idx],
+                          eps = fm$samples$precision$eps[idx]))
+}
 
 ################################################################
 ##########################            ##########################
@@ -296,14 +320,14 @@ get_pls <- function(response, design, penalty) {
 
 ## Plot the population and subject curves (suitable for models with multiple populations)
 ## 'plot_which' takes a vector of names (for models with multiple populations)
-## If mle is true, plot MLE estimate rather than the posterior mean
+## type can be either of "mean", "mle" or "map"
 ## If shade is true, thin the population samples by 10 and plot the thinned samples.
 
 ## Requires: model$basis$knots (including extrema), model$basis$type,
 ##   model$basis$degree, model$info$lvl_pop, model$data, model$mean,
 ##   model$samples$population (if shade is true)
 
-plot_spline <- function(model, limits = NULL, plot_which = NULL, mle = FALSE,
+plot_spline <- function(model, limits = NULL, plot_which = NULL, plot_type = "mean",
                         shade = FALSE) {
 
     EPS <- 1e-6
@@ -356,14 +380,22 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, mle = FALSE,
         stop("Unknown type of model.")
     }
 
-    if (mle) {
-        ## extract the mle (posterior mode)
-        coef_pop <- model$mle$population
-        dev_sub <- model$mle$subjects
-    } else {
+    if (plot_type == "mean") {
         ## extract the posterior means
         coef_pop <- model$means$population
         dev_sub <- model$means$subjects
+    } else if (plot_type == "map") {
+        ## extract the map
+        model_map <- get_max(model, "map")
+        coef_pop <- model_map$population
+        dev_sub <- model_map$subjects
+    } else if (plot_type == "mle") {
+        ## extract the mle (maximum likelihood)
+        model_mle <- get_max(model, "mle")
+        coef_pop <- model_mle$population
+        dev_sub <- model_mle$subjects
+    } else {
+        stop("Unknown plotting type.")
     }
 
     ## Helper function to calculate the y axis of the plot

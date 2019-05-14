@@ -63,7 +63,7 @@ if (type == "tpf") {
     fm$basis <- list(type = 'bs', knots = des_info$knots, degree = deg) # bs-ridge
 }
 fm$data <- simdata %>% mutate(grp_sub = sub, grp_pop = NA, sub = NULL)
-g1curve <- plot_spline(fm, shade = TRUE) + theme_bw() + theme(legend.position="none")
+g1curve <- plot_spline(fm, shade = TRUE, plot_type = "mean") + theme_bw() + theme(legend.position="none")
 
 ## regression curve
 ggsave("~/Dropbox/master/thesis/images/truth-curve-gibbs.pdf", g1curve,
