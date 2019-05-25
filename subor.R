@@ -447,22 +447,29 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, plot_type = "me
     geom_point <- ggplot2::geom_point
     geom_line <- ggplot2::geom_line
 
+    ggls <- list()
     for (i in plot_which) {
-        ggobj <- ggplot2::ggplot(mapping = aes_(~x, ~y))
         if (shade) {
-        ggobj <- ggobj +
-            geom_ribbon(aes_(y = NULL, ymin = ~`25%`, ymax = ~`75%`), plotdat_thin,
-                        fill = "grey90") +
-            geom_ribbon(aes_(y = NULL, ymin = ~`5%`, ymax = ~`95%`), plotdat_thin,
-                        fill = "grey90", alpha = 0.45)
+            ggls$rib90 <- geom_ribbon(aes_(~x, ymin = ~`5%`, ymax = ~`95%`),
+                                        plotdat_thin, fill = "grey95")
+            ggls$rib50 <- geom_ribbon(aes_(~x, ymin = ~`25%`, ymax = ~`75%`),
+                                      plotdat_thin, fill = "grey85")
+            ## ggobj <- ggobj +
+            ##     geom_ribbon(aes_(~x, ymin = ~`5%`, ymax = ~`95%`), plotdat_thin,
+            ##             fill = "grey95") +
+            ## geom_ribbon(aes_(~x, ymin = ~`25%`, ymax = ~`75%`), plotdat_thin,
+            ##             fill = "grey85")
         }
-        ggobj <- ggobj +
-            geom_point(aes_(col = ~sub), data[data$pop == i, ]) +
-            geom_line(aes_(col = ~sub, group = ~sub), plotdat_sub[[i]]) +
-            geom_line(data = plotdat_pop[[i]])
-        print(ggobj + theme_bw() + theme(legend.position="none"))
+        ggls$data <- geom_point(aes_(~x, ~y, col = ~sub), data[data$pop == i, ])
+        ggls$sub <- geom_line(aes_(~x, ~y, col = ~sub, group = ~sub), plotdat_sub[[i]])
+        ggls$pop <- geom_line(aes_(~x, ~y), data = plotdat_pop[[i]])
+        ## ggobj <- ggobj +
+        ##     geom_point(aes_(~x, ~y, col = ~sub), data[data$pop == i, ]) +
+        ##     geom_line(aes_(~x, ~y, col = ~sub, group = ~sub), plotdat_sub[[i]]) +
+        ##     geom_line(aes_(~x, ~y), data = plotdat_pop[[i]])
+        print(ggplot2::ggplot() + ggls + theme_bw() + theme(legend.position="none"))
     }
-    ggobj
+    ggls
 }
 
 

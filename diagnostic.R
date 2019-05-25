@@ -23,14 +23,18 @@ flatten_chain <- function(fm) {
     para <- para_names(fm)
     flat <- matrix(NA, size, length(para), dimnames = list(NULL, para))
 
+    ## convert coefficients
     flat[, grep("^theta", para)] <- t(fm$samples$population)
     dim(fm$samples$subject) <- c(n_terms * n_subs, size)
     flat[, grep("^delta", para)] <- t(fm$samples$subject)
-    dim(fm$samples$precision$sub1) <- c(dim_sub1^2, size)
-    flat[, grep("^cov_delta1", para)] <- t(fm$samples$precision$sub1)
-    flat[, grep("sig2_theta", para)] <- fm$samples$precision$pop
-    flat[, grep("sig2_delta2", para)] <- fm$samples$precision$sub2
-    flat[, grep("sig2_eps", para)] <- fm$samples$precision$eps
+
+    ## convert precisions
+    cov_sub1 <- prec_to_cov(fm$samples$precision$sub1)
+    flat[, grep("^cov_delta1", para)] <- matrix(cov_sub1, nrow = size,
+                                                ncol = dim_sub1^2, byrow = TRUE)
+    flat[, grep("sig2_theta", para)] <- 1 / fm$samples$precision$pop
+    flat[, grep("sig2_delta2", para)] <- 1 / fm$samples$precision$sub2
+    flat[, grep("sig2_eps", para)] <- 1 / fm$samples$precision$eps
     if (!is.null(fm$samples$lp)) {
         flat[, grep("lp__", para)] <- fm$samples$lp
     }
@@ -57,6 +61,7 @@ flatten_chains <- function(...) {
 }
 
 ## combine multiple fms into one fm
+## the returned fm inherits the the properties from the first fm in fms.
 combine_fm <- function(...) {
     fms <- list(...)
     n_chains <- length(fms)
@@ -96,7 +101,10 @@ combine_fm <- function(...) {
     }
     means <- list(population = rowMeans(samples$population),
                   subjects = rowMeans(samples$subjects, dims = 2))
-    list(means = means, samples = samples)
+
+    fms[[1]]$samples <- samples
+    fms[[1]]$means <- means
+    fms[[1]]
 }
 
 ## split Markov chains (from Aki)
@@ -171,7 +179,7 @@ sweep_posterior <- function(fm, fun) {
         stat_cov_sub1[, i] <- apply(cov_sub1[, i, ], 1, fun)
     }
     stat_cov_sub2 <- fun(1 / precision$sub2)
-    stat_cov_eps <- fun(1 /precision$eps)
+    stat_cov_eps <- fun(1 / precision$eps)
     stat_all <- c(stat_pop, stat_sub, stat_cov_sub1, stat_cov_pop,
                   stat_cov_sub2, stat_cov_eps)
     names(stat_all) <- para_names(fm)
