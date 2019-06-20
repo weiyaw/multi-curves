@@ -191,18 +191,16 @@ logprior_sub <- function(coef_pop, coef_sub, prec, para, prior) {
 
 ## calculates unnormalised log-likelihood for the subject specific model
 ## list of prec: eps
-## list of contrib: pop, sub
-## vector of response
-loglike_sub <- function(prec, contrib, y) {
-    check_names <- prod(c("eps") %in% names(prec),
-                        c("pop", "sub") %in% names(contrib))
+## resids vector
+## n_samples
+loglike_sub <- function(prec, resids, n_samples) {
+    check_names <- prod(c("eps") %in% names(prec))
 
     if (check_names == 0) {
         stop("Missing elements in the list.")
     }
 
-    length(y) / 2 * log(prec$eps) -
-        0.5 * prec$eps * crossprod(y - contrib$pop - contrib$sub)
+    n_samples / 2 * log(prec$eps) - 0.5 * prec$eps * crossprod(resids)
 }
 
 
@@ -341,8 +339,8 @@ bayes_ridge_sub <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = NUL
             ## calculate unnormalised log-likelihood
             prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
                          sub2 = kprec_sub2, eps = kprec_eps)
-            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
-            samples$ll[k] <- loglike_sub(prec, contrib, y)
+            resids <- y - kcontrib_pop - kcontrib_sub
+            samples$ll[k] <- loglike_sub(prec, resids, n_samples)
 
             ## calculate unnormalised log-posterior
             para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
@@ -378,6 +376,13 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
                   ig_b = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
                   iw_v = dim_sub1 + 1,
                   iw_lambda = diag(dim_sub1))
+
+    check_names <- prod(c("ig_a", "ig_b", "iw_v", "iw_lambda") %in% names(prior),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_a),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_b))
+    if (check_names == 0) {
+        stop("Missing prior hyperparameters.")
+    }
 
     ## clean up grp variable
     if (is.factor(grp)) {
@@ -501,8 +506,8 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
             ## calculate unnormalised log-likelihood
             prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
                          sub2 = kprec_sub2, eps = kprec_eps)
-            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
-            samples$ll[k] <- loglike_sub(prec, contrib, y)
+            resids <- y - kcontrib_pop - kcontrib_sub
+            samples$ll[k] <- loglike_sub(prec, resids, n_samples)
 
             ## calculate unnormalised log-posterior
             para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
@@ -517,6 +522,7 @@ bayes_ridge_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, burn, size, init = 
 
 ## initialise theta with constraint, and delta with tnorms with small sd
 initialise_with_Amat <- function(init, n_terms, grp, Amat) {
+    ## init: list(pop, sub); any of the element can be NULL
 
     Ainv <- diag(NCOL(Amat))
     Ainv[row(Ainv) > diff(dim(Amat))] <- Amat
@@ -590,6 +596,13 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
                   ig_b = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
                   iw_v = dim_sub1 + 1,
                   iw_lambda = diag(dim_sub1))
+
+    check_names <- prod(c("ig_a", "ig_b", "iw_v", "iw_lambda") %in% names(prior),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_a),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_b))
+    if (check_names == 0) {
+        stop("Missing prior hyperparameters.")
+    }
 
     if (NCOL(Amat) != NCOL(Bmat)) {
         stop("Dims of Amat and Bmat inconsistent.")
@@ -717,8 +730,8 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
             ## calculate unnormalised log-likelihood
             prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
                          sub2 = kprec_sub2, eps = kprec_eps)
-            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
-            samples$ll[k] <- loglike_sub(prec, contrib, y)
+            resids <- y - kcontrib_pop - kcontrib_sub
+            samples$ll[k] <- loglike_sub(prec, resids, n_samples)
 
             ## calculate unnormalised log-posterior
             para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
@@ -731,6 +744,52 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
     means <- list(population = rowMeans(samples$population),
                   subjects = rowMeans(samples$subjects, dims = 2))
     list(means = means, samples = samples)
+}
+
+update_prec <- function(kcoef, resids, para, prior) {
+
+    ## kcoef: list(pop = n_terms * 1 vec, sub = n_terms * n_subs mat)
+    ## resid: n_samples * 1 vec
+    ## para: list(Kmat, rank_K, dim_sub1, n_samples, n_subs, n_terms)
+    ## prior: list(ig_a = list(pop, sub2, eps), ig_b = list(pop, sub2, eps),
+    ##        iw_v, iw_lambda = dim_sub1 * dim_sub1 mat)
+
+    Kmat <- para$Kmat
+    rank_K <- para$rank_K
+    n_samples <- para$n_samples
+    n_subs <- para$n_subs
+    n_terms <- para$n_terms
+    dim_sub1 <- para$dim_sub1
+
+    ig_a <- prior$ig_a                  # a list
+    ig_b <- prior$ig_b                  # a list
+    iw_v <- prior$iw_v                  # a number
+    iw_lambda <- prior$iw_lambda        # a matrix, assuming symmetric
+
+    kprec <- list(pop = NA, eps = NA, sub1 = NA, sub2 = NA)
+    ## update sigma^2_theta
+    shape_pop <- 0.5 * rank_K + ig_a$pop
+    rate_pop <- 0.5 * crossprod(Kmat %*% kcoef$pop) + ig_b$pop
+    kprec$pop <- rgamma(1, shape = shape_pop, rate = rate_pop)
+
+    ## update sigma^2_epsilon
+    shape_eps <- 0.5 * n_samples + ig_a$eps
+    rate_eps <- 0.5 * crossprod(resids) + ig_b$eps
+    ## rate_eps <- 0.5 * crossprod(y - kcontrib_pop - kcontrib_sub) + ig_b$eps
+    kprec$eps <- rgamma(1, shape = shape_eps, rate = rate_eps)
+
+    ## update Sigma_dev1
+    df_sub1 <- iw_v + n_subs
+    scale_sub1 <- iw_lambda + tcrossprod(kcoef$sub[1:dim_sub1, , drop = FALSE])
+    inv_scale_sub1 <- chol2inv(chol(scale_sub1))
+    kprec$sub1 <- rWishart(1, df = df_sub1, Sigma = inv_scale_sub1)[, , 1]
+
+    ## update sigma^2_dev2
+    shape_sub2 <- 0.5 * n_subs * (n_terms - dim_sub1) + ig_a$sub2
+    rate_sub2 <- 0.5 * crossprod(c(kcoef$sub[-(1:dim_sub1), ])) + ig_b$sub2
+    kprec$sub2 <- rgamma(1, shape = shape_sub2, rate = rate_sub2)
+
+    kprec
 }
 
 ## This is a Gibbs sampler for constrained longitudinal Bayesian ridge, with an
@@ -758,6 +817,13 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
                   ig_b = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
                   iw_v = dim_sub1 + 1,
                   iw_lambda = diag(dim_sub1))
+
+    check_names <- prod(c("ig_a", "ig_b", "iw_v", "iw_lambda") %in% names(prior),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_a),
+                        c("pop", "sub2", "eps") %in% names(prior$ig_b))
+    if (check_names == 0) {
+        stop("Missing prior hyperparameters.")
+    }
 
     if (NCOL(Amat) != NCOL(Bmat)) {
         stop("Dims of Amat and Bmat inconsistent.")
@@ -809,7 +875,7 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
     init <- initialise_with_Amat(init, n_terms, grp, Amat)
     kcoef_pop <- init$pop
     kcoef_sub <- init$sub
-    kcoef <- c(kcoef_pop, kcoef_sub)
+    kgamma <- c(kcoef_pop, kcoef_sub)
 
     ## initialise prediction contribution by population coefs and subjects deviations
     kcontrib_pop <- Bmat %*% kcoef_pop
@@ -850,10 +916,10 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
         M <- chol2inv(chol(xfBmat + kprec / kprec_eps))
         mu <- M %*% fBxy
         sig <- 1 / kprec_eps * M
-        kcoef <- t(tnorm::rmvtnorm(1, mu, sig, kcoef, fAmat, -flower))
-        ## kcoef <- t(mvtnorm::rmvnorm(1, mu, sig))  # no problem in unconstrained case
-        kcoef_pop <- kcoef[1:n_terms]
-        kcoef_sub <- matrix(kcoef[-(1:n_terms)], n_terms, n_subs,
+        kgamma <- t(tnorm::rmvtnorm(1, mu, sig, kgamma, fAmat, -flower))
+        ## kgamma <- t(mvtnorm::rmvnorm(1, mu, sig))  # no problem in unconstrained case
+        kcoef_pop <- kgamma[1:n_terms]
+        kcoef_sub <- matrix(kgamma[-(1:n_terms)], n_terms, n_subs,
                             dimnames = list(NULL, levels(grp)))
         kcontrib_pop <- Bmat %*% kcoef_pop
         for (i in levels(grp)) {
@@ -877,8 +943,8 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
             ## calculate unnormalised log-likelihood
             prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
                          sub2 = kprec_sub2, eps = kprec_eps)
-            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
-            samples$ll[k] <- loglike_sub(prec, contrib, y)
+            resids <- y - kcontrib_pop - kcontrib_sub
+            samples$ll[k] <- loglike_sub(prec, resids, n_samples)
 
             ## calculate unnormalised log-posterior
             para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
