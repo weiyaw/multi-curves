@@ -579,14 +579,17 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
     ## hyperparemeters for priors
     ig_a_pop <- 0.001
     ig_b_pop <- 0.001
-    ig_a_sub1 <- 0.001
-    ig_b_sub1 <- 0.001
     ig_a_sub2 <- 0.001
     ig_b_sub2 <- 0.001
     ig_a_eps <- 0.001
     ig_b_eps <- 0.001
-    omega_1 <- diag(dim_sub1)              # positive definite
-    omega_2 <- diag(NCOL(Bmat) - dim_sub1) # positive definite
+    iw_v <- dim_sub1 + 1
+    iw_lambda <- diag(dim_sub1)          # assuming symmetric
+
+    prior <- list(ig_a = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  ig_b = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  iw_v = dim_sub1 + 1,
+                  iw_lambda = diag(dim_sub1))
 
     if (NCOL(Amat) != NCOL(Bmat)) {
         stop("Dims of Amat and Bmat inconsistent.")
@@ -605,8 +608,6 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
     n_samples <- NROW(Bmat)
     n_subs <- length(unique(grp))
     idx <- tapply(seq_len(n_samples), grp, function(x) x)
-    inv_omega_1 <- chol2inv(chol(omega_1))
-    inv_omega_2 <- chol2inv(chol(omega_2))
 
     ## some crossproducts precalculation
     xBmat <- crossprod(Bmat)
@@ -623,7 +624,9 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
                     precision = list(pop = rep(NA, size),
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
-                                     eps = rep(NA, size)))
+                                     eps = rep(NA, size)),
+                    lp = rep(NA, size),
+                    ll = rep(NA, size))
 
     ## initialise theta and delta with tnorms with small sd, and a matrix to
     ## generate feasible starting points quickly
@@ -654,18 +657,15 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
         rate_eps <- 0.5 * crossprod(y - kcontrib_pop - kcontrib_sub) + ig_b_eps
         kprec_eps <- rgamma(1, shape = shape_eps, rate = rate_eps)
 
-        ## update sigma^2_dev1
-        shape_sub1 <- 0.5 * n_subs * dim_sub1 + ig_a_sub1
-        quad_b_omega <- apply(kcoef_sub[1:dim_sub1, ], 2,
-                              function(x) crossprod(x, inv_omega_1 %*% x))
-        rate_sub1 <- 0.5 * sum(quad_b_omega) + ig_b_sub1
-        kprec_sub1 <- rgamma(1, shape = shape_sub1, rate = rate_sub1)
+        ## update Sigma_dev1
+        df_sub1 <- iw_v + n_subs
+        scale_sub1 <- iw_lambda + tcrossprod(kcoef_sub[1:dim_sub1, , drop = FALSE])
+        inv_scale_sub1 <- chol2inv(chol(scale_sub1))
+        kprec_sub1 <- rWishart(1, df = df_sub1, Sigma = inv_scale_sub1)[, , 1]
 
         ## update sigma^2_dev2
         shape_sub2 <- 0.5 * n_subs * (n_terms - dim_sub1) + ig_a_sub2
-        quad_v_omega <- apply(kcoef_sub[-(1:dim_sub1), ], 2,
-                              function(x) crossprod(x, inv_omega_2 %*% x))
-        rate_sub2 <- 0.5 * sum(quad_v_omega) + ig_b_sub2
+        rate_sub2 <- 0.5 * crossprod(c(kcoef_sub[-(1:dim_sub1), ])) + ig_b_sub2
         kprec_sub2 <- rgamma(1, shape = shape_sub2, rate = rate_sub2)
 
         ## update theta
@@ -684,7 +684,7 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
 
         ## update delta
         lower_sub <- -Amat %*% kcoef_pop
-        kprec_sub <- block_diag(kprec_sub1 * inv_omega_1, kprec_sub2 * inv_omega_2)
+        kprec_sub <- block_diag(kprec_sub1, diag(kprec_sub2, NCOL(Bmat) - dim_sub1))
 
         for (i in levels(grp)) {
             M_sub <- chol2inv(chol(xBmat_sub[, , i] + kprec_sub / kprec_eps))
@@ -708,11 +708,23 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
         ## store samples after burn-in iterations
         if (k > 0) {
             samples$precision$pop[k] <- kprec_pop
-            samples$precision$sub1[, , k] <- kprec_sub1 * inv_omega_1
+            samples$precision$sub1[, , k] <- kprec_sub1
             samples$precision$sub2[k] <- kprec_sub2
             samples$precision$eps[k] <- kprec_eps
             samples$population[, k] <- kcoef_pop
             samples$subjects[, , k] <- kcoef_sub
+
+            ## calculate unnormalised log-likelihood
+            prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
+                         sub2 = kprec_sub2, eps = kprec_eps)
+            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
+            samples$ll[k] <- loglike_sub(prec, contrib, y)
+
+            ## calculate unnormalised log-posterior
+            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
+            samples$lp[k] <- logprior_sub(kcoef_pop, kcoef_sub, prec, para, prior) +
+                samples$ll[k]
+
         }
     }
 
@@ -735,14 +747,17 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
     ## hyperparemeters for priors
     ig_a_pop <- 0.001
     ig_b_pop <- 0.001
-    ig_a_sub1 <- 0.001
-    ig_b_sub1 <- 0.001
     ig_a_sub2 <- 0.001
     ig_b_sub2 <- 0.001
     ig_a_eps <- 0.001
     ig_b_eps <- 0.001
-    omega_1 <- diag(dim_sub1)              # positive definite
-    omega_2 <- diag(NCOL(Bmat) - dim_sub1) # positive definite
+    iw_v <- dim_sub1 + 1
+    iw_lambda <- diag(dim_sub1)          # assuming symmetric
+
+    prior <- list(ig_a = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  ig_b = list(pop = 0.001, sub2 = 0.001, eps = 0.001),
+                  iw_v = dim_sub1 + 1,
+                  iw_lambda = diag(dim_sub1))
 
     if (NCOL(Amat) != NCOL(Bmat)) {
         stop("Dims of Amat and Bmat inconsistent.")
@@ -761,8 +776,6 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
     n_samples <- NROW(Bmat)
     n_subs <- length(unique(grp))
     idx <- tapply(seq_len(n_samples), grp, function(x) x, simplify = FALSE)
-    inv_omega_1 <- chol2inv(chol(omega_1))
-    inv_omega_2 <- chol2inv(chol(omega_2))
 
     ## construct full constraint matrix
     fAmat_left <- t(matrix(t(Amat), NCOL(Amat), NROW(Amat) * (n_subs + 1)))
@@ -788,11 +801,9 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
                     precision = list(pop = rep(NA, size),
                                      sub1 = array(NA, c(dim_sub1, dim_sub1, size)),
                                      sub2 = rep(NA, size),
-                                     eps = rep(NA, size)))
-
-    ## kcoef_pop <- kcoef[1:n_terms]
-    ## kcoef_sub <- matrix(kcoef[-(1:n_terms)], n_terms, n_subs,
-    ##                     dimnames = list(NULL, levels(grp)))
+                                     eps = rep(NA, size)),
+                    lp = rep(NA, size),
+                    ll = rep(NA, size))
 
     ## initialise theta and delta with tnorms with small sd
     init <- initialise_with_Amat(init, n_terms, grp, Amat)
@@ -819,22 +830,19 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
         rate_eps <- 0.5 * crossprod(y - kcontrib_pop - kcontrib_sub) + ig_b_eps
         kprec_eps <- rgamma(1, shape = shape_eps, rate = rate_eps)
 
-        ## update sigma^2_dev1
-        shape_sub1 <- 0.5 * n_subs * dim_sub1 + ig_a_sub1
-        quad_b_omega <- apply(kcoef_sub[1:dim_sub1, ], 2,
-                              function(x) crossprod(x, inv_omega_1 %*% x))
-        rate_sub1 <- 0.5 * sum(quad_b_omega) + ig_b_sub1
-        kprec_sub1 <- rgamma(1, shape = shape_sub1, rate = rate_sub1)
+        ## update Sigma_dev1
+        df_sub1 <- iw_v + n_subs
+        scale_sub1 <- iw_lambda + tcrossprod(kcoef_sub[1:dim_sub1, , drop = FALSE])
+        inv_scale_sub1 <- chol2inv(chol(scale_sub1))
+        kprec_sub1 <- rWishart(1, df = df_sub1, Sigma = inv_scale_sub1)[, , 1]
 
         ## update sigma^2_dev2
         shape_sub2 <- 0.5 * n_subs * (n_terms - dim_sub1) + ig_a_sub2
-        quad_v_omega <- apply(kcoef_sub[-(1:dim_sub1), ], 2,
-                              function(x) crossprod(x, inv_omega_2 %*% x))
-        rate_sub2 <- 0.5 * sum(quad_v_omega) + ig_b_sub2
+        rate_sub2 <- 0.5 * crossprod(c(kcoef_sub[-(1:dim_sub1), ])) + ig_b_sub2
         kprec_sub2 <- rgamma(1, shape = shape_sub2, rate = rate_sub2)
 
         ## construct Sigma
-        kprec_sub <- block_diag(kprec_sub1 * inv_omega_1, kprec_sub2 * inv_omega_2)
+        kprec_sub <- block_diag(kprec_sub1, diag(kprec_sub2, NCOL(Bmat) - dim_sub1))
         kprec <- block_diag(kprec_sub, size = n_subs + 1)
         kprec[1:n_terms, 1:n_terms] <- kprec_pop * xKmat
 
@@ -860,11 +868,22 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn,
         ## store samples after burn-in iterations
         if (k > 0) {
             samples$precision$pop[k] <- kprec_pop
-            samples$precision$sub1[, , k] <- kprec_sub1 * inv_omega_1
+            samples$precision$sub1[, , k] <- kprec_sub1
             samples$precision$sub2[k] <- kprec_sub2
             samples$precision$eps[k] <- kprec_eps
             samples$population[, k] <- kcoef_pop
             samples$subjects[, , k] <- kcoef_sub
+
+            ## calculate unnormalised log-likelihood
+            prec <- list(pop = kprec_pop, sub1 = kprec_sub1,
+                         sub2 = kprec_sub2, eps = kprec_eps)
+            contrib <- list(pop = kcontrib_pop, sub = kcontrib_sub)
+            samples$ll[k] <- loglike_sub(prec, contrib, y)
+
+            ## calculate unnormalised log-posterior
+            para <- list(xKmat = xKmat, rank_K = rank_K, dim_sub1 = dim_sub1)
+            samples$lp[k] <- logprior_sub(kcoef_pop, kcoef_sub, prec, para, prior) +
+                samples$ll[k]
         }
     }
 

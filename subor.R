@@ -328,7 +328,7 @@ get_max <- function(fm, type = "map") {
 ##   model$samples$population (if shade is true)
 
 plot_spline <- function(model, limits = NULL, plot_which = NULL, plot_type = "mean",
-                        shade = FALSE) {
+                        shade = FALSE, silent = FALSE) {
 
     EPS <- 1e-6
     fine <- 200                         # how fine the plot_x should be?
@@ -449,25 +449,19 @@ plot_spline <- function(model, limits = NULL, plot_which = NULL, plot_type = "me
 
     ggls <- list()
     for (i in plot_which) {
+        ggls$data <- geom_point(aes_(~x, ~y, col = ~sub), data[data$pop == i, ])
         if (shade) {
             ggls$rib90 <- geom_ribbon(aes_(~x, ymin = ~`5%`, ymax = ~`95%`),
-                                        plotdat_thin, fill = "grey95")
+                                        plotdat_thin, fill = "grey85", alpha = 0.7)
             ggls$rib50 <- geom_ribbon(aes_(~x, ymin = ~`25%`, ymax = ~`75%`),
-                                      plotdat_thin, fill = "grey85")
-            ## ggobj <- ggobj +
-            ##     geom_ribbon(aes_(~x, ymin = ~`5%`, ymax = ~`95%`), plotdat_thin,
-            ##             fill = "grey95") +
-            ## geom_ribbon(aes_(~x, ymin = ~`25%`, ymax = ~`75%`), plotdat_thin,
-            ##             fill = "grey85")
+                                      plotdat_thin, fill = "grey65", alpha = 0.5)
         }
-        ggls$data <- geom_point(aes_(~x, ~y, col = ~sub), data[data$pop == i, ])
         ggls$sub <- geom_line(aes_(~x, ~y, col = ~sub, group = ~sub), plotdat_sub[[i]])
         ggls$pop <- geom_line(aes_(~x, ~y), data = plotdat_pop[[i]])
-        ## ggobj <- ggobj +
-        ##     geom_point(aes_(~x, ~y, col = ~sub), data[data$pop == i, ]) +
-        ##     geom_line(aes_(~x, ~y, col = ~sub, group = ~sub), plotdat_sub[[i]]) +
-        ##     geom_line(aes_(~x, ~y), data = plotdat_pop[[i]])
-        print(ggplot2::ggplot() + ggls + theme_bw() + theme(legend.position="none"))
+
+        if (!silent) {
+            print(ggplot2::ggplot() + ggls + theme_bw() + theme(legend.position="none"))
+        }
     }
     ggls
 }
