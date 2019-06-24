@@ -233,34 +233,128 @@ g1v2combo_sum11 <- as.tibble(flat1v2[, , "theta[1]"] + flat1v2[, , "delta[1,1]"]
 
 
 ## with monotonicity constraint
-A_mat <- get_constmat_bs(NCOL(Bmat), "increasing") %*% cbind(Gmat, Hmat)
-lower <- rep(0, NROW(A_mat))
+## with monotonicity constraint
+## with monotonicity constraint
+## with monotonicity constraint
 
-source("~/Dropbox/master/algo/main-ridge.R")
-set.seed(45)
-fm1c <- bayes_ridge_cons_sub(simdata$y, simdata$sub, Bmat, Kmat, 1 + 1, A_mat,
-                             1000, 2000)
-
-fm1c$basis <- list(type = 'bs_hier', knots = des_info$knots, degree = 1,
-                     trans_mat = cbind(Gmat, Hmat))
-fm1c$data <- simdata %>% mutate(grp_sub = sub, grp_pop = NA, sub = NULL)
-plot_spline(fm1c)
-
-source("~/Dropbox/master/algo/main-ridge.R")
-set.seed(42)
-fm1cv2 <- bayes_ridge_cons_sub_v2(simdata$y, simdata$sub, Bmat, Kmat, 1 + 1, A_mat,
-                                1000, 2000)
-
-fm1cv2$basis <- list(type = 'bs_hier', knots = des_info$knots, degree = 1,
-                     trans_mat = cbind(Gmat, Hmat))
-fm1cv2$data <- simdata %>% mutate(grp_sub = sub, grp_pop = NA, sub = NULL)
+## design matrices (tpf of B-spline LMM model)
+rm(list = setdiff(ls(), c("simdata", "knt", "true_curve")))
 source("~/Dropbox/master/algo/subor.R")
-plot_spline(fm1cv2)
+deg <- 1
+K <- length(knt) - 2                    # inner knots
+n_bsf <- K + deg + 1                    # number of b-spline basis functions
+D <- get_diff_mat(n_bsf, deg + 1)       # difference matrix
+type <- "bs"                            # "bs" or "tpf"
+
+# generate some parameters
+library(tidyverse)
+library(gridExtra)
+library(bayesplot)
+library(doMC)                           # for parallel loops
+registerDoMC(4)                         # use 4 threads
+source("~/Dropbox/master/algo/subor.R")
+knt <- seq(0, 10, 2)
+simdata <- read_csv("~/Dropbox/master/algo/data/simdata.csv")
+plotdata <- read_csv("~/Dropbox/master/algo/data/simdata-curve.csv")
+plotdata_pop <- read_csv("~/Dropbox/master/algo/data/simdata-popcurve.csv")
+
+## generate the truth (dotted)
+true_curve <- list(sub = geom_line(aes(plot_x, plot_y, col = sub), plotdata, lty = 2,
+                                   alpha = 0.9),
+                   pop = geom_line(aes(plot_x, plot_y), plotdata_pop, lty = 2),
+                   theme_bw(),
+                   theme(legend.position="none"),
+                   labs(x = 'x', y = 'y'))
+
+## design matrices, Gmat and Hmat
+if (type == "tpf") {
+    des_info <- get_design_tpf(simdata$x, K, deg) # tpf
+    Bmat <- des_info$design                       # tpf
+    Kmat <- cbind(matrix(0, K, deg + 1), diag(K)) # tpf
+} else if (type == "bs") {
+    des_info <- get_design_bs(simdata$x, K, deg)                         # bs
+    Gmat <- cbind(-1/sqrt(n_bsf), poly(1:n_bsf, deg = deg, raw = FALSE)) # bs unraw
+    Hmat <- crossprod(D, solve(tcrossprod(D)))                           # bs
+    Bmat <- des_info$design %*% cbind(Gmat, Hmat)                        # bs
+    Kmat <- cbind(matrix(0, K, deg + 1), diag(K))                        # bs
+}
+rm(list = c("K", "n_bsf", "D"))
+
+library(nlme)
+Amat <- get_constmat_bs(NCOL(Bmat), "increasing") %*% cbind(Gmat, Hmat)
+lower <- rep(0, NROW(Amat))
+pop <- rep(1, length(simdata$sub))
+Xmat <- unname(Bmat[ , 1:(deg + 1)])
+Zmat <- unname(Bmat[, -(1:(deg + 1))])
+fit <- lme(y ~ Xmat - 1, simdata, list(pop = pdIdent(~Zmat - 1),
+                                       sub = pdBlocked(list(pdSymm(~Xmat - 1),
+                                                            pdIdent(~Zmat - 1)))))
+prec <- lapply(as.matrix(fit$modelStruct$reStruct), function(x) x * fit$sigma^2)
+prec$pop <- 1 / diag(prec$pop)[[1]]
+prec$sub1 <- unname(solve(prec$sub[1:(deg + 1), 1:(deg + 1)]))
+prec$sub2 <- 1 / diag(prec$sub)[[deg + 2]]
+prec$sub <- NULL
+
+source("~/Dropbox/master/algo/main-ridge.R")
+set.seed(103, kind = "L'Ecuyer-CMRG")
+fm1cv2_ls <- foreach(i = 1:4) %dopar% {
+    init <- list(pop = c(tnorm::rmvtnorm(1, mean = get_pls(simdata$y, Bmat, Kmat),
+                                       initial = c(1, 1, rep(0, 4)),
+                                       F = Amat, g = -1 * lower)))
+    fm <- bayes_ridge_cons_sub_v2(simdata$y, simdata$sub, Bmat, Kmat, deg + 1,
+                                  Amat, 1000, 2000, init, prec = prec)
+    if (type == "tpf") {
+        fm$basis <- list(type = 'tpf', knots = des_info$knots, degree = deg) # tpf
+    } else if (type == "bs") {
+        fm$basis <- list(type = 'bs_hier', knots = des_info$knots, degree = deg, # bs
+                         trans_mat = cbind(Gmat, Hmat))
+    }
+    fm$data <- simdata %>% mutate(grp_sub = sub, grp_pop = NA, sub = NULL)
+    fm
+}
+RNGkind("Mersenne-Twister")
+
+source("~/Dropbox/master/algo/subor.R")
+g1cv2ls <- list()
+for (fm in fm1cv2_ls) {
+    g1cv2ls <- c(g1cv2ls, plot_spline(fm, shade = TRUE, silent = TRUE))
+}
+g1cv2curve_all <- ggplot() + g1cv2ls[grep("pop|sub|data", names(g1cv2ls))] + theme_bw() +
+    theme(legend.position="none")
+
+## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-all.pdf", g1cv2curve_all,
+##        width = 5, height = 6)
+
+source("~/Dropbox/master/algo/diagnostic.R")
+## visualise the truth curve and add it to g1cv2curve
+fm1cv2 <- do.call(combine_fm, fm1cv2_ls)
+g1cv2curve_true <- ggplot() + true_curve +
+    plot_spline(fm1cv2, shade = FALSE, silent = TRUE)
+
+## regression curve
+## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-true.pdf", g1cv2curve_true,
+##        width = 5, height = 6)
+
+
+## diagnostic
+source("~/Dropbox/master/algo/diagnostic.R")
+flat1cv2 <- do.call(flatten_chains, fm1cv2_ls)
+long1cv2 <- summary_matrix_flats(flat1cv2)
+## print(xtable(long1cv2), include.rownames=FALSE, tabular.environment = "longtable")
+short1cv2 <- long1cv2 %>% filter(Rhat > 1.01 | n_eff < 500)
+short1cv2 <- long1cv2 %>% filter(grepl("theta\\[1\\]|delta\\[1,1\\]", Parameter))
+## print(xtable(short1cv2), include.rownames=FALSE, tabular.environment = "tabular")
+
+## diagnostic plots
+g1cv2combo_theta1 <- mcmc_combo(flat1cv2, pars = "theta[1]", c("dens_overlay", "trace"))
+g1cv2combo_delta11 <- mcmc_combo(flat1cv2, pars = "delta[1,1]", c("dens_overlay", "trace"))
+
+
 
 source("~/Dropbox/master/algo/diagnostic.R")
 flat1cv2 <- do.call(flatten_chains, list(fm1cv2))[, , 1:43, drop = FALSE]
-print(summary_matrix_flats(flat1cv2), n = Inf)
-mcmc_combo(flat1cv2[, , 1:43], pars = "theta[3]", c("dens", "trace"))
+tail(summary_matrix_flats(flat1cv2), n = 10)
+mcmc_combo(flat1cv2[, , 1:43], pars = "theta[1]", c("dens", "trace"))
 
 
 

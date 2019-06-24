@@ -228,15 +228,15 @@ update_prec <- function(coef, resids, para, prior) {
 
     prec <- list(pop = NA, eps = NA, sub1 = NA, sub2 = NA)
 
-    ## update sigma^2_theta
-    shape_pop <- 0.5 * rank_K + ig_a$pop
-    rate_pop <- 0.5 * crossprod(Kmat %*% coef$pop) + ig_b$pop
-    prec$pop <- rgamma(1, shape = shape_pop, rate = rate_pop)
-
     ## update sigma^2_epsilon
     shape_eps <- 0.5 * n_samples + ig_a$eps
     rate_eps <- 0.5 * crossprod(resids) + ig_b$eps
     prec$eps <- rgamma(1, shape = shape_eps, rate = rate_eps)
+
+    ## update sigma^2_theta
+    shape_pop <- 0.5 * rank_K + ig_a$pop
+    rate_pop <- 0.5 * crossprod(Kmat %*% coef$pop) + ig_b$pop
+    prec$pop <- rgamma(1, shape = shape_pop, rate = rate_pop)
 
     ## update Sigma_dev1
     df_sub1 <- iw_v + n_subs
@@ -577,7 +577,8 @@ initialise_with_Amat <- function(init, n_terms, grp, Amat) {
 ## Algorithms paremeters: burn, size
 ## Extras: verbose
 bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
-                                 init = NULL, prior = NULL, verbose = TRUE) {
+                                 init = NULL, prior = NULL, prec = NULL,
+                                 verbose = TRUE) {
 
     ## hyperparemeters for priors
     if (is.null(prior)) {
@@ -654,6 +655,11 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
         kresids <- y - kcontrib_pop - kcontrib_sub
         kprec <- update_prec(kcoef, kresids, para, prior)
 
+        if (!is.null(prec)) {
+            kprec$pop <- prec$pop
+            kprec$sub1 <- prec$sub1
+            kprec$sub2 <- prec$sub2
+        }
 
         ## update theta
         lower_pop <- apply(-Amat %*% kcoef$sub, 1, max)
@@ -727,7 +733,8 @@ bayes_ridge_cons_sub <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
 ## Algorithms paremeters: burn, size
 ## Extras: verbose
 bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, size,
-                                    init = NULL, prior = NULL, verbose = TRUE) {
+                                    init = NULL, prior = NULL, prec = NULL,
+                                    verbose = TRUE) {
 
     ## hyperparemeters for priors
     if (is.null(prior)) {
@@ -808,6 +815,13 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, si
                      n_samples = n_samples, n_subs = n_subs, n_terms = n_terms)
         kresids <- y - kcontrib_pop - kcontrib_sub
         kprec <- update_prec(kcoef, kresids, para, prior)
+
+        ## fix precision if provided
+        if (!is.null(prec)) {
+            kprec$pop <- prec$pop
+            kprec$sub1 <- prec$sub1
+            kprec$sub2 <- prec$sub2
+        }
 
         ## construct Sigma
         kprec_sub <- block_diag(kprec$sub1, diag(kprec$sub2, n_terms - dim_sub1))
