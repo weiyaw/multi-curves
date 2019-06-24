@@ -49,30 +49,13 @@ K <- length(knt) - 2                    # inner knots
 n_bsf <- K + deg + 1                    # number of b-spline basis functions
 D <- get_diff_mat(n_bsf, deg + 1)       # difference matrix
 type <- "bs"                            # "bs", "bs-ridge" or "tpf"
-raw <- FALSE                             # raw poly or not
 
 ## design matrices, Gmat and Hmat
-if (type == "tpf") {
-    des_info <- get_design_tpf(simdata$x, K, deg) # tpf
-    Bmat <- des_info$design                       # tpf
-    Kmat <- cbind(matrix(0, K, deg + 1), diag(K)) # tpf
-} else if (type == "bs" & raw) {
-    des_info <- get_design_bs(simdata$x, K, deg)           # bs
-    Gmat <- cbind(1, poly(1:n_bsf, deg = deg, raw = TRUE)) # bs raw
-    Hmat <- crossprod(D, solve(tcrossprod(D)))             # bs
-    Bmat <- des_info$design %*% cbind(Gmat, Hmat)          # bs
-    Kmat <- cbind(matrix(0, K, deg + 1), diag(K))          # bs
-} else if (type == "bs" & !raw) {
-    des_info <- get_design_bs(simdata$x, K, deg)                         # bs
-    Gmat <- cbind(-1/sqrt(n_bsf), poly(1:n_bsf, deg = deg, raw = FALSE)) # bs unraw
-    Hmat <- crossprod(D, solve(tcrossprod(D)))                           # bs
-    Bmat <- des_info$design %*% cbind(Gmat, Hmat)                        # bs
-    Kmat <- cbind(matrix(0, K, deg + 1), diag(K))                        # bs
-} else if (type == "bs-ridge") {
-    des_info <- get_design_bs(simdata$x, K, deg)  # bs-ridge
-    Bmat <- des_info$design                       # bs-ridge
-    Kmat <- D                                     # bs-ridge
-}
+des_info <- get_design_bs(simdata$x, K, deg)                         # bs
+Gmat <- cbind(-1/sqrt(n_bsf), poly(1:n_bsf, deg = deg, raw = FALSE)) # bs unraw
+Hmat <- crossprod(D, solve(tcrossprod(D)))                           # bs
+Bmat <- des_info$design %*% cbind(Gmat, Hmat)                        # bs
+Kmat <- cbind(matrix(0, K, deg + 1), diag(K))                        # bs
 rm(list = c("K", "n_bsf", "D"))
 
 source("~/Dropbox/master/algo/main-ridge.R")
@@ -81,14 +64,8 @@ fm1_ls <- foreach(i = 1:4) %dopar% {
     init <- list(pop = get_pls(simdata$y, Bmat, Kmat) + rnorm(NCOL(Bmat), sd = 100))
     fm <- bayes_ridge_sub(simdata$y, simdata$sub, Bmat, Kmat, deg + 1, 1000, 2000,
                           init = init)
-    if (type == "tpf") {
-        fm$basis <- list(type = 'tpf', knots = des_info$knots, degree = deg) # tpf
-    } else if (type == "bs") {
-        fm$basis <- list(type = 'bs_hier', knots = des_info$knots, degree = deg, # bs
-                         trans_mat = cbind(Gmat, Hmat))
-    } else if (type == "bs-ridge") {
-        fm$basis <- list(type = 'bs', knots = des_info$knots, degree = deg) # bs-ridge
-    }
+    fm$basis <- list(type = 'bs_hier', knots = des_info$knots, degree = deg, # bs
+                     trans_mat = cbind(Gmat, Hmat))
     fm$data <- simdata %>% mutate(grp_sub = sub, grp_pop = NA, sub = NULL)
     fm
 }
@@ -244,7 +221,7 @@ deg <- 1
 K <- length(knt) - 2                    # inner knots
 n_bsf <- K + deg + 1                    # number of b-spline basis functions
 D <- get_diff_mat(n_bsf, deg + 1)       # difference matrix
-type <- "bs"                            # "bs" or "tpf"
+type <- "tpf"                            # "bs" or "tpf"
 
 # generate some parameters
 library(tidyverse)
@@ -271,18 +248,20 @@ if (type == "tpf") {
     des_info <- get_design_tpf(simdata$x, K, deg) # tpf
     Bmat <- des_info$design                       # tpf
     Kmat <- cbind(matrix(0, K, deg + 1), diag(K)) # tpf
+    Amat <- get_constmat_tpf(des_info$knots, "increasing", deg)
+    lower <- rep(0, NROW(Amat))
 } else if (type == "bs") {
     des_info <- get_design_bs(simdata$x, K, deg)                         # bs
     Gmat <- cbind(-1/sqrt(n_bsf), poly(1:n_bsf, deg = deg, raw = FALSE)) # bs unraw
     Hmat <- crossprod(D, solve(tcrossprod(D)))                           # bs
     Bmat <- des_info$design %*% cbind(Gmat, Hmat)                        # bs
     Kmat <- cbind(matrix(0, K, deg + 1), diag(K))                        # bs
+    Amat <- get_constmat_bs(NCOL(Bmat), "increasing") %*% cbind(Gmat, Hmat)
+    lower <- rep(0, NROW(Amat))
 }
 rm(list = c("K", "n_bsf", "D"))
 
 library(nlme)
-Amat <- get_constmat_bs(NCOL(Bmat), "increasing") %*% cbind(Gmat, Hmat)
-lower <- rep(0, NROW(Amat))
 pop <- rep(1, length(simdata$sub))
 Xmat <- unname(Bmat[ , 1:(deg + 1)])
 Zmat <- unname(Bmat[, -(1:(deg + 1))])
@@ -299,8 +278,8 @@ source("~/Dropbox/master/algo/main-ridge.R")
 set.seed(103, kind = "L'Ecuyer-CMRG")
 fm1cv2_ls <- foreach(i = 1:4) %dopar% {
     init <- list(pop = c(tnorm::rmvtnorm(1, mean = get_pls(simdata$y, Bmat, Kmat),
-                                       initial = c(1, 1, rep(0, 4)),
-                                       F = Amat, g = -1 * lower)))
+                                         initial = c(1, 1, rep(0, 4)),
+                                         F = Amat, g = -1 * lower)))
     fm <- bayes_ridge_cons_sub_v2(simdata$y, simdata$sub, Bmat, Kmat, deg + 1,
                                   Amat, 1000, 2000, init, prec = prec)
     if (type == "tpf") {
