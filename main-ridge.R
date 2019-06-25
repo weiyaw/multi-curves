@@ -832,7 +832,7 @@ bayes_ridge_cons_sub_v2 <- function(y, grp, Bmat, Kmat, dim_sub1, Amat, burn, si
         M <- chol2inv(chol(xfBmat + fkprec_all / kprec$eps))
         mu <- M %*% fBxy
         sig <- 1 / kprec$eps * M
-        fkcoef <- t(tnorm::rmvtnorm(1, mu, sig, fkcoef, fAmat, -flower))
+        fkcoef <- t(tnorm::rmvtnorm(1, mu, sig, fkcoef, fAmat, -flower, 10))
         ## fkcoef <- t(mvtnorm::rmvnorm(1, mu, sig))  # no problem in unconstrained case
         kcoef$pop <- fkcoef[1:n_terms]
         kcoef$sub <- matrix(fkcoef[-(1:n_terms)], n_terms, n_subs,

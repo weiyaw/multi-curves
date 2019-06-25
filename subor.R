@@ -154,8 +154,8 @@ get_design_tpf <- function(x, K, deg) {
 
     ## get the inner knots
     if (length(K) == 1 && is.numeric(K)) {
-        ## res$knots <- unname(quantile(unique(x), seq(0, 1, len = K + 2)))
-        res$knots <- unname(seq(min(x), max(x), length.out = K + 2))
+        res$knots <- unname(quantile(unique(x), seq(0, 1, len = K + 2)))
+        ## res$knots <- unname(seq(min(x), max(x), length.out = K + 2))
         knots <- res$knots[-c(1, K + 2)]
     } else if (is.vector(K) && is.numeric(K)) {
         knots <- K[-c(1, length(K))]
