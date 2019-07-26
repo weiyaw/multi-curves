@@ -209,19 +209,10 @@ g1v2combo_sum11 <- as.tibble(flat1v2[, , "theta[1]"] + flat1v2[, , "delta[1,1]"]
 
 
 
-## with monotonicity constraint
-## with monotonicity constraint
-## with monotonicity constraint
-## with monotonicity constraint
-
-## design matrices (tpf of B-spline LMM model)
-rm(list = setdiff(ls(), c("simdata", "knt", "true_curve")))
-source("~/Dropbox/master/algo/subor.R")
-deg <- 1
-K <- length(knt) - 2                    # inner knots
-n_bsf <- K + deg + 1                    # number of b-spline basis functions
-D <- get_diff_mat(n_bsf, deg + 1)       # difference matrix
-type <- "tpf"                            # "bs" or "tpf"
+## WITH MONOTONICITY CONSTRAINT
+## WITH MONOTONICITY CONSTRAINT
+## TRY B-SPLINE (LINEAR AND QUADRATIC) AND TPF (QUADRATIC)
+## TRY B-SPLINE (LINEAR AND QUADRATIC) AND TPF (QUADRATIC)
 
 # generate some parameters
 library(tidyverse)
@@ -242,6 +233,15 @@ true_curve <- list(sub = geom_line(aes(plot_x, plot_y, col = sub), plotdata, lty
                    theme_bw(),
                    theme(legend.position="none"),
                    labs(x = 'x', y = 'y'))
+
+## design matrices (tpf of B-spline LMM model)
+rm(list = setdiff(ls(), c("simdata", "knt", "true_curve")))
+source("~/Dropbox/master/algo/subor.R")
+deg <- 1
+K <- length(knt) - 2                    # inner knots
+n_bsf <- K + deg + 1                    # number of b-spline basis functions
+D <- get_diff_mat(n_bsf, deg + 1)       # difference matrix
+type <- "bs"                            # "bs" or "tpf"
 
 ## design matrices, Gmat and Hmat
 if (type == "tpf") {
@@ -278,7 +278,7 @@ source("~/Dropbox/master/algo/main-ridge.R")
 set.seed(103, kind = "L'Ecuyer-CMRG")
 fm1cv2_ls <- foreach(i = 1:4) %dopar% {
     init <- list(pop = c(tnorm::rmvtnorm(1, mean = get_pls(simdata$y, Bmat, Kmat),
-                                         initial = c(1, 1, rep(0, 4)),
+                                         initial = c(1, 1, rep(0, deg + 3)),
                                          F = Amat, g = -1 * lower)))
     fm <- bayes_ridge_cons_sub_v2(simdata$y, simdata$sub, Bmat, Kmat, deg + 1,
                                   Amat, 1000, 2000, init, prec = prec)
@@ -300,26 +300,32 @@ for (fm in fm1cv2_ls) {
 }
 g1cv2curve_all <- ggplot() + g1cv2ls[grep("pop|sub|data", names(g1cv2ls))] + theme_bw() +
     theme(legend.position="none")
+g1cv2curve_all
 
-## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-all.pdf", g1cv2curve_all,
-##        width = 5, height = 6)
+## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-all-bslin.pdf",
+##        g1cv2curve_all, width = 5, height = 6)
+## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-all-bsquad.pdf",
+##        g1cv2curve_all, width = 5, height = 6)
+## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-all-tpfquad.pdf",
+##        g1cv2curve_all, width = 5, height = 6)
 
 source("~/Dropbox/master/algo/diagnostic.R")
 ## visualise the truth curve and add it to g1cv2curve
 fm1cv2 <- do.call(combine_fm, fm1cv2_ls)
 g1cv2curve_true <- ggplot() + true_curve +
     plot_spline(fm1cv2, shade = FALSE, silent = TRUE)
+g1cv2curve_true
 
 ## regression curve
-## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-true.pdf", g1cv2curve_true,
-##        width = 5, height = 6)
+## ggsave("~/Dropbox/master/thesis/images/truth-gibbscv2-true-bslin.pdf",
+##        g1cv2curve_true, width = 5, height = 6)
 
 
 ## diagnostic
 source("~/Dropbox/master/algo/diagnostic.R")
 flat1cv2 <- do.call(flatten_chains, fm1cv2_ls)
 long1cv2 <- summary_matrix_flats(flat1cv2)
-## print(xtable(long1cv2), include.rownames=FALSE, tabular.environment = "longtable")
+print(xtable(long1cv2), include.rownames=FALSE, tabular.environment = "longtable")
 short1cv2 <- long1cv2 %>% filter(Rhat > 1.01 | n_eff < 500)
 short1cv2 <- long1cv2 %>% filter(grepl("theta\\[1\\]|delta\\[1,1\\]", Parameter))
 ## print(xtable(short1cv2), include.rownames=FALSE, tabular.environment = "tabular")
