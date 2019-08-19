@@ -129,7 +129,7 @@ initialise_with_pls <- function(init, n_terms, grp, pls) {
         init$sub <- matrix(rnorm(n_terms * n_subs) * 0.01, n_terms, n_subs,
                            dimnames = list(NULL, levels(grp)))
     } else {
-        if (dim(init$sub) == c(n_terms, n_subs)) {
+        if (all(dim(init$sub) == c(n_terms, n_subs))) {
             init$sub <- as.matrix(init$sub)
             cat("Subjects initial values supplied.\n")
             if (is.null(colnames(init$sub))) {
